@@ -11,6 +11,7 @@
     <button id="toggle-sidebar" title="Toggle explorer">☰</button>
     <span id="root-path">loading…</span>
     <div id="topbar-actions">
+      <button id="btn-preview">Preview</button>
       <button id="new-file-btn">+ File</button>
       <button id="new-folder-btn">+ Folder</button>
       <button id="save-btn">Save</button>
@@ -18,12 +19,21 @@
   </div>
   <div id="main">
     <div id="sidebar">
+      <input id="tree-filter" type="text" placeholder="Filter files…" />
       <div id="file-tree"></div>
     </div>
     <div id="editor-area">
       <div id="tabs"></div>
+      <div id="breadcrumb"></div>
       <div id="editor-container"></div>
       <div id="empty-state">Open a file from the explorer to start editing.</div>
+      <div id="preview-panel" class="hidden">
+        <div id="preview-topbar">
+          <span>Preview</span>
+          <button id="close-preview">✕ Close</button>
+        </div>
+        <iframe id="preview-frame" sandbox="allow-scripts"></iframe>
+      </div>
       <div id="permission-gate" class="hidden">
         <div class="gate-box">
           <h2>Storage access needed</h2>

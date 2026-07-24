@@ -140,6 +140,7 @@ async function openFile(absPath) {
   activeTab = absPath;
   editor.setModel(openTabs[absPath].model);
   document.getElementById('empty-state').classList.add('hidden');
+  renderBreadcrumb(absPath);
   renderTabs();
   if (window.innerWidth <= 700) document.getElementById('sidebar').classList.add('collapsed');
 }
@@ -165,10 +166,11 @@ function renderTabs() {
       if (activeTab === p) {
         const remaining = Object.keys(openTabs);
         activeTab = remaining[0] || null;
-        if (activeTab) editor.setModel(openTabs[activeTab].model);
+        if (activeTab) { editor.setModel(openTabs[activeTab].model); renderBreadcrumb(activeTab); }
         else {
           editor.setModel(monaco.editor.createModel('', 'plaintext'));
           document.getElementById('empty-state').classList.remove('hidden');
+          renderBreadcrumb(null);
         }
       }
       renderTabs();
@@ -179,6 +181,7 @@ function renderTabs() {
       activeTab = p;
       editor.setModel(openTabs[p].model);
       document.getElementById('empty-state').classList.add('hidden');
+      renderBreadcrumb(p);
       renderTabs();
     });
     tabsEl.appendChild(tab);
@@ -203,6 +206,114 @@ function flashSaved() {
   btn.textContent = 'Saved ✓';
   setTimeout(() => { btn.textContent = old; }, 900);
 }
+
+// ---------------- Breadcrumb ----------------
+function renderBreadcrumb(absPath) {
+  const el = document.getElementById('breadcrumb');
+  if (!absPath) { el.innerHTML = ''; return; }
+  const rel = absPath.startsWith(ROOT) ? absPath.slice(ROOT.length + 1) : absPath;
+  const parts = rel.split('/').filter(Boolean);
+  el.innerHTML = parts
+    .map((p, i) => {
+      const isLast = i === parts.length - 1;
+      return `<span class="${isLast ? 'crumb-file' : ''}">${p}</span>`;
+    })
+    .join('<span class="crumb-sep">›</span>');
+}
+
+// ---------------- File tree filter ----------------
+document.getElementById('tree-filter').addEventListener('input', (e) => {
+  const q = e.target.value.trim().toLowerCase();
+  document.querySelectorAll('#file-tree .tree-item').forEach((item) => {
+    if (!q) { item.classList.remove('filtered-out'); return; }
+    const match = item.textContent.toLowerCase().includes(q);
+    item.classList.toggle('filtered-out', !match);
+  });
+});
+
+// ---------------- Live preview ----------------
+const MIME_BY_EXT = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon',
+};
+
+function joinPath(baseDir, rel) {
+  if (rel.startsWith('/')) return rel; // already absolute
+  const stack = baseDir.split('/').filter(Boolean);
+  rel.split('/').forEach((seg) => {
+    if (seg === '..') stack.pop();
+    else if (seg !== '.' && seg !== '') stack.push(seg);
+  });
+  return '/' + stack.join('/');
+}
+
+function isLocalRef(src) {
+  return src && !/^(https?:|data:|#|\/\/)/i.test(src);
+}
+
+async function inlineAsset(html, tagRegex, resolver) {
+  let result = html;
+  let match;
+  const matches = [];
+  while ((match = tagRegex.exec(html)) !== null) matches.push(match);
+  for (const m of matches) {
+    try {
+      const replacement = await resolver(m);
+      if (replacement !== null) result = result.replace(m[0], replacement);
+    } catch (e) { /* leave original tag if the asset can't be read */ }
+  }
+  return result;
+}
+
+async function buildPreviewHtml(htmlContent, baseDir) {
+  let html = htmlContent;
+
+  // Inline <link rel="stylesheet" href="...">
+  html = await inlineAsset(html, /<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, async (m) => {
+    if (!isLocalRef(m[1])) return null;
+    const abs = joinPath(baseDir, m[1]);
+    const res = await FS().readFile({ path: abs, encoding: 'utf8' });
+    return `<style>${res.data}</style>`;
+  });
+
+  // Inline <script src="...">
+  html = await inlineAsset(html, /<script[^>]+src=["']([^"']+)["'][^>]*><\/script>/g, async (m) => {
+    if (!isLocalRef(m[1])) return null;
+    const abs = joinPath(baseDir, m[1]);
+    const res = await FS().readFile({ path: abs, encoding: 'utf8' });
+    return `<script>${res.data}</script>`;
+  });
+
+  // Inline <img src="...">
+  html = await inlineAsset(html, /<img[^>]+src=["']([^"']+)["']/g, async (m) => {
+    if (!isLocalRef(m[1])) return null;
+    const abs = joinPath(baseDir, m[1]);
+    const ext = m[1].split('.').pop().toLowerCase();
+    const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
+    const res = await FS().readFile({ path: abs }); // no encoding => base64
+    return m[0].replace(m[1], `data:${mime};base64,${res.data}`);
+  });
+
+  return html;
+}
+
+document.getElementById('btn-preview').addEventListener('click', async () => {
+  if (!activeTab) { alert('Open a file first.'); return; }
+  if (!/\.html?$/i.test(activeTab)) { alert('Preview works on HTML files — open one first.'); return; }
+  const htmlContent = openTabs[activeTab].model.getValue();
+  const baseDir = activeTab.substring(0, activeTab.lastIndexOf('/'));
+  let finalHtml;
+  try {
+    finalHtml = await buildPreviewHtml(htmlContent, baseDir);
+  } catch (e) {
+    finalHtml = htmlContent; // fall back to unresolved HTML rather than blocking preview entirely
+  }
+  document.getElementById('preview-frame').srcdoc = finalHtml;
+  document.getElementById('preview-panel').classList.remove('hidden');
+});
+document.getElementById('close-preview').addEventListener('click', () => {
+  document.getElementById('preview-panel').classList.add('hidden');
+});
 
 document.getElementById('save-btn').addEventListener('click', saveActive);
 window.addEventListener('keydown', (e) => {

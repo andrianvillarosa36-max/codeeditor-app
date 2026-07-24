@@ -61,10 +61,15 @@ body {
 #sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; border-right: none; }
 
 #file-tree { padding: 8px 4px; }
-.tree-item {
-  padding: 5px 6px; cursor: pointer; border-radius: 3px; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; font-size: 13px;
+#tree-filter {
+  width: 100%; box-sizing: border-box; margin: 8px 8px 0 8px; padding: 6px 8px;
+  background: #1e1e1e; border: 1px solid var(--border); border-radius: 3px;
+  color: var(--text); font-size: 12px; width: calc(100% - 16px);
 }
+#tree-filter:focus { outline: 1px solid var(--accent); }
+.tree-item { padding: 5px 6px; cursor: pointer; border-radius: 3px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.tree-item.filtered-out { display: none; }
 .tree-item:hover { background: var(--hover); }
 .tree-children { }
 
@@ -91,6 +96,35 @@ body {
 .tab-close:hover { background: #ffffff22; color: #fff; }
 
 #editor-container { flex: 1; min-height: 0; }
+
+#breadcrumb {
+  padding: 5px 10px; font-size: 10px; color: var(--text-dim);
+  background: #252526; border-bottom: 1px solid var(--border);
+  white-space: nowrap; overflow-x: auto;
+}
+#breadcrumb .crumb-sep { margin: 0 4px; color: #555; }
+#breadcrumb .crumb-file { color: var(--text); }
+
+#btn-preview {
+  background: #3c3c3c; color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 6px 10px; font-size: 12px; cursor: pointer;
+}
+#btn-preview:hover { background: var(--hover); }
+
+#preview-panel {
+  position: absolute; inset: 0; background: #fff; z-index: 15;
+  display: flex; flex-direction: column;
+}
+#preview-panel.hidden { display: none; }
+#preview-topbar {
+  background: #323233; color: #fff; padding: 8px 10px; font-size: 12px;
+  display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+#close-preview {
+  background: var(--accent); color: #fff; border: none; border-radius: 3px;
+  padding: 6px 10px; font-size: 11px; cursor: pointer;
+}
+#preview-frame { flex: 1; border: none; width: 100%; background: #fff; }
 
 #empty-state {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
