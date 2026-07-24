@@ -40,7 +40,9 @@ body {
 #root-path {
   color: var(--text-dim); font-size: 11px; flex: 1;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
 }
+#root-path:hover { color: var(--accent); }
 #topbar-actions { display: flex; gap: 6px; }
 #topbar-actions button {
   background: var(--accent); color: #fff; border: none; border-radius: 3px;

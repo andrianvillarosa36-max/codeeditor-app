@@ -9,7 +9,7 @@ let editor;
 const openTabs = {}; // absPath -> { model, dirty }
 let activeTab = null;
 
-const ROOT = '/storage/emulated/0';
+let ROOT = '/storage/emulated/0';
 
 function FS() { return Capacitor.Plugins.Filesystem; }
 function StoragePermission() { return Capacitor.Plugins.StoragePermission; }
@@ -50,12 +50,21 @@ function langFromExt(name) {
 // ---------------- Permission gating ----------------
 async function boot() {
   document.getElementById('root-path').textContent = ROOT;
+  document.getElementById('root-path').title = 'Tap to return to full storage';
+  document.getElementById('root-path').addEventListener('click', () => switchRoot('/storage/emulated/0'));
   const { granted } = await StoragePermission().check();
   if (granted) {
     startEditor();
   } else {
     showPermissionGate();
   }
+}
+
+function switchRoot(newRoot) {
+  ROOT = newRoot;
+  document.getElementById('root-path').textContent = ROOT;
+  document.getElementById('file-tree').scrollTop = 0;
+  renderTree(ROOT, document.getElementById('file-tree'));
 }
 
 function showPermissionGate() {
@@ -238,9 +247,16 @@ const MIME_BY_EXT = {
 };
 
 function joinPath(baseDir, rel) {
-  if (rel.startsWith('/')) return rel; // already absolute
-  const stack = baseDir.split('/').filter(Boolean);
-  rel.split('/').forEach((seg) => {
+  let base = baseDir;
+  let path = rel;
+  if (rel.startsWith('/')) {
+    // Leading slash means "relative to the project root" (standard web
+    // convention), not a literal filesystem path.
+    base = ROOT;
+    path = rel.slice(1);
+  }
+  const stack = base.split('/').filter(Boolean);
+  path.split('/').forEach((seg) => {
     if (seg === '..') stack.pop();
     else if (seg !== '.' && seg !== '') stack.push(seg);
   });
@@ -324,7 +340,7 @@ window.addEventListener('keydown', (e) => {
 document.getElementById('new-file-btn').addEventListener('click', async () => {
   const name = prompt(`New file path (relative to ${ROOT}), e.g. notes/todo.md:`);
   if (!name) return;
-  const full = `${ROOT}/${name}`;
+  const full = joinPath(ROOT, name);
   try {
     await FS().writeFile({ path: full, data: '', encoding: 'utf8', recursive: true });
   } catch (e) { alert('Could not create file: ' + e.message); return; }
@@ -332,14 +348,14 @@ document.getElementById('new-file-btn').addEventListener('click', async () => {
   openFile(full);
 });
 
-document.getElementById('new-folder-btn').addEventListener('click', async () => {
-  const name = prompt(`New folder path (relative to ${ROOT}):`);
+document.getElementById('new-project-btn').addEventListener('click', async () => {
+  const name = prompt(`New project name (created inside ${ROOT}):`);
   if (!name) return;
-  const full = `${ROOT}/${name}`;
+  const full = joinPath(ROOT, name);
   try {
     await FS().mkdir({ path: full, recursive: true });
-  } catch (e) { alert('Could not create folder: ' + e.message); return; }
-  await renderTree(ROOT, document.getElementById('file-tree'));
+  } catch (e) { alert('Could not create project: ' + e.message); return; }
+  switchRoot(full); // mkdir + cd, in one step
 });
 
 document.getElementById('toggle-sidebar').addEventListener('click', () => {
