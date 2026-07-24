@@ -1,0 +1,15 @@
+{
+  "name": "codeeditor-app",
+  "version": "1.0.0",
+  "description": "Native Android wrapper for the Termux code editor",
+  "scripts": {
+    "sync": "cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/core": "latest",
+    "@capacitor/android": "latest"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "latest"
+  }
+}
