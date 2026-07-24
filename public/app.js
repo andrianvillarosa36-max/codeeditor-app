@@ -10,6 +10,7 @@ const openTabs = {}; // absPath -> { model, dirty }
 let activeTab = null;
 
 let ROOT = '/storage/emulated/0';
+const HOME = '/storage/emulated/0';
 
 function FS() { return Capacitor.Plugins.Filesystem; }
 function StoragePermission() { return Capacitor.Plugins.StoragePermission; }
@@ -25,6 +26,10 @@ require(['vs/editor/editor.main'], () => {
     minimap: { enabled: window.innerWidth > 700 },
     wordWrap: 'on',
     scrollBeyondLastLine: false,
+    // Keep pasted text exactly as-is instead of Monaco re-indenting each
+    // line based on language heuristics — that reformatting is what was
+    // causing runaway "staircase" indentation on paste.
+    autoIndent: 'keep',
   });
   editor.onDidChangeModelContent(() => {
     if (activeTab && openTabs[activeTab]) {
@@ -47,11 +52,19 @@ function langFromExt(name) {
   return map[ext] || 'plaintext';
 }
 
+const ICON_BY_EXT = {
+  html: '🟧', htm: '🟧', css: '🟦', scss: '🟦', js: '🟨', jsx: '🟨', ts: '🟦', tsx: '🟦',
+  json: '📋', md: '📝', py: '🐍',
+  png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️', ico: '🖼️',
+};
+function iconFor(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return ICON_BY_EXT[ext] || '📄';
+}
+
 // ---------------- Permission gating ----------------
 async function boot() {
-  document.getElementById('root-path').textContent = ROOT;
-  document.getElementById('root-path').title = 'Tap to return to full storage';
-  document.getElementById('root-path').addEventListener('click', () => switchRoot('/storage/emulated/0'));
+  document.getElementById('home-btn').addEventListener('click', () => switchRoot(HOME));
   const { granted } = await StoragePermission().check();
   if (granted) {
     startEditor();
@@ -85,6 +98,7 @@ function showPermissionGate() {
 }
 
 async function startEditor() {
+  document.getElementById('root-path').textContent = ROOT;
   await renderTree(ROOT, document.getElementById('file-tree'));
 }
 
@@ -105,15 +119,31 @@ async function renderTree(absPath, container) {
     const full = `${absPath}/${entry.name}`;
     const item = document.createElement('div');
     item.className = 'tree-item';
-    item.textContent = (entry.isDir ? '📁 ' : '📄 ') + entry.name;
 
     if (entry.isDir) {
+      const row = document.createElement('div');
+      row.className = 'tree-row';
+
+      const label = document.createElement('span');
+      label.className = 'tree-label';
+      label.textContent = '📁 ' + entry.name;
+      row.appendChild(label);
+
+      const openBtn = document.createElement('button');
+      openBtn.className = 'tree-open-btn';
+      openBtn.textContent = 'Open';
+      openBtn.title = 'Enter this folder as your project root';
+      openBtn.addEventListener('click', (e) => { e.stopPropagation(); switchRoot(full); });
+      row.appendChild(openBtn);
+
+      item.appendChild(row);
+
       let expanded = false;
       const childContainer = document.createElement('div');
       childContainer.className = 'tree-children';
       childContainer.style.paddingLeft = '14px';
       childContainer.style.display = 'none';
-      item.addEventListener('click', (e) => {
+      label.addEventListener('click', (e) => {
         e.stopPropagation();
         expanded = !expanded;
         childContainer.style.display = expanded ? 'block' : 'none';
@@ -122,6 +152,7 @@ async function renderTree(absPath, container) {
       container.appendChild(item);
       container.appendChild(childContainer);
     } else {
+      item.textContent = iconFor(entry.name) + ' ' + entry.name;
       item.addEventListener('click', (e) => { e.stopPropagation(); openFile(full); });
       container.appendChild(item);
     }
@@ -154,6 +185,30 @@ async function openFile(absPath) {
   if (window.innerWidth <= 700) document.getElementById('sidebar').classList.add('collapsed');
 }
 
+function switchToTab(p) {
+  activeTab = p;
+  editor.setModel(openTabs[p].model);
+  document.getElementById('empty-state').classList.add('hidden');
+  renderBreadcrumb(p);
+  renderTabs();
+}
+
+function closeTab(p) {
+  openTabs[p].model.dispose();
+  delete openTabs[p];
+  if (activeTab === p) {
+    const remaining = Object.keys(openTabs);
+    activeTab = remaining[0] || null;
+    if (activeTab) { editor.setModel(openTabs[activeTab].model); renderBreadcrumb(activeTab); }
+    else {
+      editor.setModel(monaco.editor.createModel('', 'plaintext'));
+      document.getElementById('empty-state').classList.remove('hidden');
+      renderBreadcrumb(null);
+    }
+  }
+  renderTabs();
+}
+
 function renderTabs() {
   const tabsEl = document.getElementById('tabs');
   tabsEl.innerHTML = '';
@@ -168,32 +223,29 @@ function renderTabs() {
     const closeBtn = document.createElement('span');
     closeBtn.textContent = '✕';
     closeBtn.className = 'tab-close';
-    closeBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openTabs[p].model.dispose();
-      delete openTabs[p];
-      if (activeTab === p) {
-        const remaining = Object.keys(openTabs);
-        activeTab = remaining[0] || null;
-        if (activeTab) { editor.setModel(openTabs[activeTab].model); renderBreadcrumb(activeTab); }
-        else {
-          editor.setModel(monaco.editor.createModel('', 'plaintext'));
-          document.getElementById('empty-state').classList.remove('hidden');
-          renderBreadcrumb(null);
-        }
-      }
-      renderTabs();
-    });
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeTab(p); });
     tab.appendChild(closeBtn);
 
-    tab.addEventListener('click', () => {
-      activeTab = p;
-      editor.setModel(openTabs[p].model);
-      document.getElementById('empty-state').classList.add('hidden');
-      renderBreadcrumb(p);
-      renderTabs();
-    });
+    tab.addEventListener('click', () => switchToTab(p));
     tabsEl.appendChild(tab);
+  });
+  renderOpenEditors();
+}
+
+// ---------------- Open Editors (sidebar list) ----------------
+function renderOpenEditors() {
+  const el = document.getElementById('open-editors-list');
+  const section = document.getElementById('open-editors');
+  const paths = Object.keys(openTabs);
+  if (paths.length === 0) { section.classList.add('hidden'); return; }
+  section.classList.remove('hidden');
+  el.innerHTML = '';
+  paths.forEach((p) => {
+    const row = document.createElement('div');
+    row.className = 'tree-item open-editor-item' + (p === activeTab ? ' active' : '');
+    row.textContent = iconFor(p) + ' ' + p.split('/').pop() + (openTabs[p].dirty ? ' ●' : '');
+    row.addEventListener('click', () => switchToTab(p));
+    el.appendChild(row);
   });
 }
 
@@ -206,11 +258,26 @@ async function saveActive() {
   } catch (e) { alert('Save failed: ' + e.message); return; }
   openTabs[activeTab].dirty = false;
   renderTabs();
-  flashSaved();
+  flashSaved('save-btn');
 }
 
-function flashSaved() {
-  const btn = document.getElementById('save-btn');
+async function saveAll() {
+  const dirtyPaths = Object.keys(openTabs).filter((p) => openTabs[p].dirty);
+  if (dirtyPaths.length === 0) { flashSaved('save-all-btn'); return; }
+  const failures = [];
+  for (const p of dirtyPaths) {
+    try {
+      await FS().writeFile({ path: p, data: openTabs[p].model.getValue(), encoding: 'utf8' });
+      openTabs[p].dirty = false;
+    } catch (e) { failures.push(p.split('/').pop()); }
+  }
+  renderTabs();
+  if (failures.length) alert('Could not save: ' + failures.join(', '));
+  else flashSaved('save-all-btn');
+}
+
+function flashSaved(btnId) {
+  const btn = document.getElementById(btnId);
   const old = btn.textContent;
   btn.textContent = 'Saved ✓';
   setTimeout(() => { btn.textContent = old; }, 900);
@@ -267,7 +334,7 @@ function isLocalRef(src) {
   return src && !/^(https?:|data:|#|\/\/)/i.test(src);
 }
 
-async function inlineAsset(html, tagRegex, resolver) {
+async function inlineAsset(html, tagRegex, resolver, warnings) {
   let result = html;
   let match;
   const matches = [];
@@ -276,31 +343,31 @@ async function inlineAsset(html, tagRegex, resolver) {
     try {
       const replacement = await resolver(m);
       if (replacement !== null) result = result.replace(m[0], replacement);
-    } catch (e) { /* leave original tag if the asset can't be read */ }
+    } catch (e) {
+      if (isLocalRef(m[1])) warnings.push(m[1]); // record what couldn't be found
+    }
   }
   return result;
 }
 
 async function buildPreviewHtml(htmlContent, baseDir) {
   let html = htmlContent;
+  const warnings = [];
 
-  // Inline <link rel="stylesheet" href="...">
   html = await inlineAsset(html, /<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, async (m) => {
     if (!isLocalRef(m[1])) return null;
     const abs = joinPath(baseDir, m[1]);
     const res = await FS().readFile({ path: abs, encoding: 'utf8' });
     return `<style>${res.data}</style>`;
-  });
+  }, warnings);
 
-  // Inline <script src="...">
   html = await inlineAsset(html, /<script[^>]+src=["']([^"']+)["'][^>]*><\/script>/g, async (m) => {
     if (!isLocalRef(m[1])) return null;
     const abs = joinPath(baseDir, m[1]);
     const res = await FS().readFile({ path: abs, encoding: 'utf8' });
     return `<script>${res.data}</script>`;
-  });
+  }, warnings);
 
-  // Inline <img src="...">
   html = await inlineAsset(html, /<img[^>]+src=["']([^"']+)["']/g, async (m) => {
     if (!isLocalRef(m[1])) return null;
     const abs = joinPath(baseDir, m[1]);
@@ -308,7 +375,17 @@ async function buildPreviewHtml(htmlContent, baseDir) {
     const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
     const res = await FS().readFile({ path: abs }); // no encoding => base64
     return m[0].replace(m[1], `data:${mime};base64,${res.data}`);
-  });
+  }, warnings);
+
+  if (warnings.length > 0) {
+    const list = warnings.map((w) => w.replace(/</g, '&lt;')).join(', ');
+    const banner = `<div style="position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;` +
+      `padding:8px 12px;font-family:sans-serif;font-size:12px;z-index:999999;">` +
+      `⚠️ Preview couldn't find: ${list} — check the path relative to this project's root.</div>` +
+      `<div style="height:38px;"></div>`;
+    if (/<body[^>]*>/i.test(html)) html = html.replace(/<body[^>]*>/i, (m) => m + banner);
+    else html = banner + html;
+  }
 
   return html;
 }
@@ -322,7 +399,7 @@ document.getElementById('btn-preview').addEventListener('click', async () => {
   try {
     finalHtml = await buildPreviewHtml(htmlContent, baseDir);
   } catch (e) {
-    finalHtml = htmlContent; // fall back to unresolved HTML rather than blocking preview entirely
+    finalHtml = htmlContent;
   }
   document.getElementById('preview-frame').srcdoc = finalHtml;
   document.getElementById('preview-panel').classList.remove('hidden');
@@ -332,11 +409,12 @@ document.getElementById('close-preview').addEventListener('click', () => {
 });
 
 document.getElementById('save-btn').addEventListener('click', saveActive);
+document.getElementById('save-all-btn').addEventListener('click', saveAll);
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveActive(); }
 });
 
-// ---------------- New file / folder ----------------
+// ---------------- New file / project ----------------
 document.getElementById('new-file-btn').addEventListener('click', async () => {
   const name = prompt(`New file path (relative to ${ROOT}), e.g. notes/todo.md:`);
   if (!name) return;
