@@ -29,6 +29,14 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Apply native storage plugin
+        run: |
+          mkdir -p android/app/src/main/java/com/termux/codeeditor
+          cp native-src/main/java/com/termux/codeeditor/*.java android/app/src/main/java/com/termux/codeeditor/
+          sed -i '/<manifest /a\    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />' android/app/src/main/AndroidManifest.xml
+          echo "---- MainActivity ----"; cat android/app/src/main/java/com/termux/codeeditor/MainActivity.java
+          echo "---- Manifest ----"; cat android/app/src/main/AndroidManifest.xml
+
       - name: Apply custom app icon
         run: cp -rf icons/mipmap-* android/app/src/main/res/
 

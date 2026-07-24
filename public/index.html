@@ -1,19 +1,44 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Code Editor</title>
-  <style>
-    body { background:#1e1e1e; color:#ccc; font-family: sans-serif; display:flex;
-      align-items:center; justify-content:center; height:100vh; margin:0; padding:20px; text-align:center; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Termux Code Editor</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div>
-    <h2>Code Editor</h2>
-    <p>Waiting for the Termux server…</p>
-    <p style="color:#888; font-size:14px;">Open Termux and run:<br><code>node server.js ~/storage/shared 8090</code><br>then reopen this app.</p>
+  <div id="topbar">
+    <button id="toggle-sidebar" title="Toggle explorer">☰</button>
+    <span id="root-path">loading…</span>
+    <div id="topbar-actions">
+      <button id="new-file-btn">+ File</button>
+      <button id="new-folder-btn">+ Folder</button>
+      <button id="save-btn">Save</button>
+    </div>
   </div>
+  <div id="main">
+    <div id="sidebar">
+      <div id="file-tree"></div>
+    </div>
+    <div id="editor-area">
+      <div id="tabs"></div>
+      <div id="editor-container"></div>
+      <div id="empty-state">Open a file from the explorer to start editing.</div>
+      <div id="permission-gate" class="hidden">
+        <div class="gate-box">
+          <h2>Storage access needed</h2>
+          <p>This editor reads and writes real files on your device, so it
+             needs the "All files access" permission — the same one file
+             manager apps use.</p>
+          <button id="grant-btn">Grant Access</button>
+          <p id="gate-hint" class="gate-hint">This opens Android Settings. Flip the toggle on, then come back here.</p>
+          <button id="continue-btn" class="secondary">Continue</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>

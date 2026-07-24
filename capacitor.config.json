@@ -1,12 +1,5 @@
 {
   "appId": "com.termux.codeeditor",
   "appName": "Code Editor",
-  "webDir": "public",
-  "server": {
-    "url": "http://127.0.0.1:8090",
-    "cleartext": true
-  },
-  "android": {
-    "allowMixedContent": true
-  }
+  "webDir": "public"
 }
