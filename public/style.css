@@ -118,6 +118,18 @@ body {
 .tab-close:hover { background: #ffffff22; color: #fff; }
 
 #editor-container { flex: 1; min-height: 0; }
+#editor-container.hidden { display: none; }
+
+#image-viewer {
+  flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  overflow: auto; background:
+    repeating-conic-gradient(#2a2a2a 0% 25%, #1e1e1e 0% 50%) 0 0 / 20px 20px;
+}
+#image-viewer.hidden { display: none; }
+#image-viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+#font-dec, #font-inc { min-width: 34px; font-weight: bold; }
+#wrap-toggle { font-size: 10px; }
 
 #breadcrumb {
   padding: 5px 10px; font-size: 10px; color: var(--text-dim);

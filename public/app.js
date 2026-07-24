@@ -6,11 +6,16 @@
    ============================================================ */
 
 let editor;
-const openTabs = {}; // absPath -> { model, dirty }
+const openTabs = {}; // absPath -> { type: 'text'|'image', model?, dataUri?, dirty }
 let activeTab = null;
+let fontSize = 14;
+let wrapOn = true;
 
 let ROOT = '/storage/emulated/0';
 const HOME = '/storage/emulated/0';
+
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp']);
+function isImage(name) { return IMAGE_EXTS.has(name.split('.').pop().toLowerCase()); }
 
 function FS() { return Capacitor.Plugins.Filesystem; }
 function StoragePermission() { return Capacitor.Plugins.StoragePermission; }
@@ -22,17 +27,21 @@ require(['vs/editor/editor.main'], () => {
     language: 'plaintext',
     theme: 'vs-dark',
     automaticLayout: true,
-    fontSize: 14,
+    fontSize,
     minimap: { enabled: window.innerWidth > 700 },
     wordWrap: 'on',
+    // 'none' keeps wrapped continuation lines flush with the left edge
+    // instead of matching the original line's (often deep) indentation —
+    // on a narrow phone screen that indentation was eating most of the
+    // width and causing a cascading "staircase" effect on long lines.
+    wrappingIndent: 'none',
     scrollBeyondLastLine: false,
     // Keep pasted text exactly as-is instead of Monaco re-indenting each
-    // line based on language heuristics — that reformatting is what was
-    // causing runaway "staircase" indentation on paste.
+    // line based on language heuristics.
     autoIndent: 'keep',
   });
   editor.onDidChangeModelContent(() => {
-    if (activeTab && openTabs[activeTab]) {
+    if (activeTab && openTabs[activeTab] && openTabs[activeTab].type === 'text') {
       openTabs[activeTab].dirty = true;
       renderTabs();
     }
@@ -61,6 +70,11 @@ function iconFor(name) {
   const ext = name.split('.').pop().toLowerCase();
   return ICON_BY_EXT[ext] || '📄';
 }
+
+const MIME_BY_EXT = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon', bmp: 'image/bmp',
+};
 
 // ---------------- Permission gating ----------------
 async function boot() {
@@ -169,38 +183,58 @@ async function renderTree(absPath, container) {
 // ---------------- Open / tabs ----------------
 async function openFile(absPath) {
   if (!openTabs[absPath]) {
-    let content;
-    try {
-      const res = await FS().readFile({ path: absPath, encoding: 'utf8' });
-      content = res.data;
-    } catch (e) { alert('Could not open file: ' + e.message); return; }
-    const model = monaco.editor.createModel(content, langFromExt(absPath));
-    openTabs[absPath] = { model, dirty: false };
+    if (isImage(absPath)) {
+      let dataUri;
+      try {
+        const ext = absPath.split('.').pop().toLowerCase();
+        const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
+        const res = await FS().readFile({ path: absPath }); // no encoding => base64
+        dataUri = `data:${mime};base64,${res.data}`;
+      } catch (e) { alert('Could not open image: ' + e.message); return; }
+      openTabs[absPath] = { type: 'image', dataUri, dirty: false };
+    } else {
+      let content;
+      try {
+        const res = await FS().readFile({ path: absPath, encoding: 'utf8' });
+        content = res.data;
+      } catch (e) { alert('Could not open file: ' + e.message); return; }
+      const model = monaco.editor.createModel(content, langFromExt(absPath));
+      openTabs[absPath] = { type: 'text', model, dirty: false };
+    }
   }
-  activeTab = absPath;
-  editor.setModel(openTabs[absPath].model);
-  document.getElementById('empty-state').classList.add('hidden');
-  renderBreadcrumb(absPath);
-  renderTabs();
+  showTab(absPath);
   if (window.innerWidth <= 700) document.getElementById('sidebar').classList.add('collapsed');
 }
 
-function switchToTab(p) {
-  activeTab = p;
-  editor.setModel(openTabs[p].model);
+function showTab(absPath) {
+  activeTab = absPath;
+  const tab = openTabs[absPath];
+  const isImg = tab.type === 'image';
+  document.getElementById('editor-container').classList.toggle('hidden', isImg);
+  document.getElementById('image-viewer').classList.toggle('hidden', !isImg);
   document.getElementById('empty-state').classList.add('hidden');
-  renderBreadcrumb(p);
+  if (isImg) {
+    document.getElementById('image-viewer-img').src = tab.dataUri;
+  } else {
+    editor.setModel(tab.model);
+  }
+  renderBreadcrumb(absPath);
   renderTabs();
 }
 
+function switchToTab(p) { showTab(p); }
+
 function closeTab(p) {
-  openTabs[p].model.dispose();
+  if (openTabs[p].type === 'text') openTabs[p].model.dispose();
   delete openTabs[p];
   if (activeTab === p) {
     const remaining = Object.keys(openTabs);
     activeTab = remaining[0] || null;
-    if (activeTab) { editor.setModel(openTabs[activeTab].model); renderBreadcrumb(activeTab); }
-    else {
+    if (activeTab) {
+      showTab(activeTab);
+    } else {
+      document.getElementById('editor-container').classList.remove('hidden');
+      document.getElementById('image-viewer').classList.add('hidden');
       editor.setModel(monaco.editor.createModel('', 'plaintext'));
       document.getElementById('empty-state').classList.remove('hidden');
       renderBreadcrumb(null);
@@ -251,7 +285,7 @@ function renderOpenEditors() {
 
 // ---------------- Save ----------------
 async function saveActive() {
-  if (!activeTab) return;
+  if (!activeTab || openTabs[activeTab].type !== 'text') return;
   const content = openTabs[activeTab].model.getValue();
   try {
     await FS().writeFile({ path: activeTab, data: content, encoding: 'utf8' });
@@ -262,7 +296,7 @@ async function saveActive() {
 }
 
 async function saveAll() {
-  const dirtyPaths = Object.keys(openTabs).filter((p) => openTabs[p].dirty);
+  const dirtyPaths = Object.keys(openTabs).filter((p) => openTabs[p].type === 'text' && openTabs[p].dirty);
   if (dirtyPaths.length === 0) { flashSaved('save-all-btn'); return; }
   const failures = [];
   for (const p of dirtyPaths) {
@@ -307,18 +341,26 @@ document.getElementById('tree-filter').addEventListener('input', (e) => {
   });
 });
 
-// ---------------- Live preview ----------------
-const MIME_BY_EXT = {
-  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
-  svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon',
-};
+// ---------------- Font size / word wrap controls ----------------
+document.getElementById('font-dec').addEventListener('click', () => {
+  fontSize = Math.max(10, fontSize - 2);
+  editor.updateOptions({ fontSize });
+});
+document.getElementById('font-inc').addEventListener('click', () => {
+  fontSize = Math.min(28, fontSize + 2);
+  editor.updateOptions({ fontSize });
+});
+document.getElementById('wrap-toggle').addEventListener('click', () => {
+  wrapOn = !wrapOn;
+  editor.updateOptions({ wordWrap: wrapOn ? 'on' : 'off' });
+  document.getElementById('wrap-toggle').textContent = wrapOn ? 'Wrap: On' : 'Wrap: Off';
+});
 
+// ---------------- Live preview ----------------
 function joinPath(baseDir, rel) {
   let base = baseDir;
   let path = rel;
   if (rel.startsWith('/')) {
-    // Leading slash means "relative to the project root" (standard web
-    // convention), not a literal filesystem path.
     base = ROOT;
     path = rel.slice(1);
   }
@@ -344,7 +386,7 @@ async function inlineAsset(html, tagRegex, resolver, warnings) {
       const replacement = await resolver(m);
       if (replacement !== null) result = result.replace(m[0], replacement);
     } catch (e) {
-      if (isLocalRef(m[1])) warnings.push(m[1]); // record what couldn't be found
+      if (isLocalRef(m[1])) warnings.push(m[1]);
     }
   }
   return result;
@@ -373,7 +415,7 @@ async function buildPreviewHtml(htmlContent, baseDir) {
     const abs = joinPath(baseDir, m[1]);
     const ext = m[1].split('.').pop().toLowerCase();
     const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
-    const res = await FS().readFile({ path: abs }); // no encoding => base64
+    const res = await FS().readFile({ path: abs });
     return m[0].replace(m[1], `data:${mime};base64,${res.data}`);
   }, warnings);
 
@@ -433,7 +475,7 @@ document.getElementById('new-project-btn').addEventListener('click', async () =>
   try {
     await FS().mkdir({ path: full, recursive: true });
   } catch (e) { alert('Could not create project: ' + e.message); return; }
-  switchRoot(full); // mkdir + cd, in one step
+  switchRoot(full);
 });
 
 document.getElementById('toggle-sidebar').addEventListener('click', () => {
@@ -441,6 +483,6 @@ document.getElementById('toggle-sidebar').addEventListener('click', () => {
 });
 
 window.addEventListener('beforeunload', (e) => {
-  const hasDirty = Object.values(openTabs).some((t) => t.dirty);
+  const hasDirty = Object.values(openTabs).some((t) => t.type === 'text' && t.dirty);
   if (hasDirty) { e.preventDefault(); e.returnValue = ''; }
 });
