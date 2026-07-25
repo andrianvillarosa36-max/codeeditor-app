@@ -63,6 +63,22 @@
     </div>
   </div>
 
+  <div id="quick-open" class="hidden modal-overlay">
+    <div class="modal-box">
+      <input id="quick-open-input" type="text" placeholder="Go to file… (type a name)" />
+      <div id="quick-open-list" class="modal-list"></div>
+      <div class="modal-hint">Esc to close · Enter to open</div>
+    </div>
+  </div>
+
+  <div id="command-palette" class="hidden modal-overlay">
+    <div class="modal-box">
+      <input id="command-palette-input" type="text" placeholder="Type a command…" />
+      <div id="command-palette-list" class="modal-list"></div>
+      <div class="modal-hint">Esc to close · Enter to run</div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
   <script src="app.js"></script>
 </body>

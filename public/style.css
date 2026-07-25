@@ -131,6 +131,28 @@ body {
 #font-dec, #font-inc { min-width: 34px; font-weight: bold; }
 #wrap-toggle { font-size: 10px; }
 
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
+  display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh;
+}
+.modal-overlay.hidden { display: none; }
+.modal-box {
+  width: min(480px, 92%); background: #252526; border: 1px solid var(--border);
+  border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); overflow: hidden;
+  display: flex; flex-direction: column; max-height: 70vh;
+}
+.modal-box input {
+  width: 100%; box-sizing: border-box; padding: 12px; font-size: 14px;
+  background: #1e1e1e; color: var(--text); border: none; border-bottom: 1px solid var(--border);
+}
+.modal-box input:focus { outline: none; }
+.modal-list { overflow-y: auto; }
+.modal-item { padding: 9px 12px; font-size: 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal-item.selected, .modal-item:hover { background: var(--accent); color: #fff; }
+.modal-item.modal-dim { color: var(--text-dim); cursor: default; }
+.modal-item.modal-dim:hover { background: transparent; color: var(--text-dim); }
+.modal-hint { padding: 6px 12px; font-size: 10px; color: var(--text-dim); border-top: 1px solid var(--border); text-align: right; }
+
 #breadcrumb {
   padding: 5px 10px; font-size: 10px; color: var(--text-dim);
   background: #252526; border-bottom: 1px solid var(--border);

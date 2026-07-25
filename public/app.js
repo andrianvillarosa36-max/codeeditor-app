@@ -11,6 +11,7 @@ let activeTab = null;
 let fontSize = 14;
 let wrapOn = false; // nano-style default: lines run off-screen, scroll sideways to read
 let autoClosing = false; // reentrancy guard for the auto-close-tag feature
+let pasteGuardUntil = 0; // suppress auto-close for a moment after any paste
 
 let ROOT = '/storage/emulated/0';
 const HOME = '/storage/emulated/0';
@@ -31,17 +32,15 @@ require(['vs/editor/editor.main'], () => {
     fontSize,
     minimap: { enabled: window.innerWidth > 700 },
     wordWrap: wrapOn ? 'on' : 'off',
-    // 'none' keeps wrapped continuation lines flush with the left edge
-    // instead of matching the original line's (often deep) indentation,
-    // for the rare case wrap does get turned back on.
     wrappingIndent: 'none',
-    // Nano-style: no vertical indent-guide lines cluttering the view.
-    guides: { indentation: false, highlightActiveIndentation: false },
     scrollBeyondLastLine: false,
-    // Keep pasted text exactly as-is instead of Monaco re-indenting each
-    // line based on language heuristics.
     autoIndent: 'keep',
   });
+  // Mobile paste can arrive as a burst of individual character insertions
+  // rather than one clean block, which fooled the auto-close-tag feature
+  // into firing mid-paste. Suppress it for a moment around any paste,
+  // regardless of how the paste itself gets delivered underneath.
+  editor.onDidPaste(() => { pasteGuardUntil = Date.now() + 1000; });
   editor.onDidChangeModelContent((e) => {
     if (activeTab && openTabs[activeTab] && openTabs[activeTab].type === 'text') {
       openTabs[activeTab].dirty = true;
@@ -58,30 +57,28 @@ const VOID_ELEMENTS = new Set([
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
-// When the user finishes typing an opening tag like "<body>", insert the
-// matching "</body>" right after the cursor, with the cursor left sitting
-// between the two tags so they can keep typing content normally.
 function maybeAutoCloseTag(e) {
+  if (Date.now() < pasteGuardUntil) return;
   const model = editor.getModel();
   if (!model || model.getLanguageId() !== 'html') return;
-  if (e.isFlush) return; // whole-document replace (opening a file) — not a keystroke
+  if (e.isFlush) return;
 
   for (const change of e.changes) {
     if (change.text !== '>' || change.rangeLength !== 0) continue;
 
     const line = change.range.startLineNumber;
-    const gtColumn = change.range.startColumn; // column where '>' was inserted
-    const preText = model.getLineContent(line).substring(0, gtColumn - 1); // text before that '>', excluding it
+    const gtColumn = change.range.startColumn;
+    const preText = model.getLineContent(line).substring(0, gtColumn - 1);
 
     const match = preText.match(/<([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^<>]*)?)$/);
     if (!match) continue;
 
     const tagName = match[1].toLowerCase();
     const attrs = match[2] || '';
-    if (attrs.trim().endsWith('/')) continue; // self-closed, e.g. <img />
+    if (attrs.trim().endsWith('/')) continue;
     if (VOID_ELEMENTS.has(tagName)) continue;
 
-    const insertCol = gtColumn + 1; // right after the '>' we just typed
+    const insertCol = gtColumn + 1;
     const insertPos = new monaco.Range(line, insertCol, line, insertCol);
     autoClosing = true;
     editor.executeEdits('autoCloseTag', [{ range: insertPos, text: `</${tagName}>`, forceMoveMarkers: true }],
@@ -121,11 +118,8 @@ const MIME_BY_EXT = {
 async function boot() {
   document.getElementById('home-btn').addEventListener('click', () => switchRoot(HOME));
   const { granted } = await StoragePermission().check();
-  if (granted) {
-    startEditor();
-  } else {
-    showPermissionGate();
-  }
+  if (granted) startEditor();
+  else showPermissionGate();
 }
 
 function switchRoot(newRoot) {
@@ -229,7 +223,7 @@ async function openFile(absPath) {
       try {
         const ext = absPath.split('.').pop().toLowerCase();
         const mime = MIME_BY_EXT[ext] || 'application/octet-stream';
-        const res = await FS().readFile({ path: absPath }); // no encoding => base64
+        const res = await FS().readFile({ path: absPath });
         dataUri = `data:${mime};base64,${res.data}`;
       } catch (e) { alert('Could not open image: ' + e.message); return; }
       openTabs[absPath] = { type: 'image', dataUri, dirty: false };
@@ -254,11 +248,8 @@ function showTab(absPath) {
   document.getElementById('editor-container').classList.toggle('hidden', isImg);
   document.getElementById('image-viewer').classList.toggle('hidden', !isImg);
   document.getElementById('empty-state').classList.add('hidden');
-  if (isImg) {
-    document.getElementById('image-viewer-img').src = tab.dataUri;
-  } else {
-    editor.setModel(tab.model);
-  }
+  if (isImg) document.getElementById('image-viewer-img').src = tab.dataUri;
+  else editor.setModel(tab.model);
   renderBreadcrumb(absPath);
   renderTabs();
 }
@@ -307,7 +298,6 @@ function renderTabs() {
   renderOpenEditors();
 }
 
-// ---------------- Open Editors (sidebar list) ----------------
 function renderOpenEditors() {
   const el = document.getElementById('open-editors-list');
   const section = document.getElementById('open-editors');
@@ -365,10 +355,7 @@ function renderBreadcrumb(absPath) {
   const rel = absPath.startsWith(ROOT) ? absPath.slice(ROOT.length + 1) : absPath;
   const parts = rel.split('/').filter(Boolean);
   el.innerHTML = parts
-    .map((p, i) => {
-      const isLast = i === parts.length - 1;
-      return `<span class="${isLast ? 'crumb-file' : ''}">${p}</span>`;
-    })
+    .map((p, i) => `<span class="${i === parts.length - 1 ? 'crumb-file' : ''}">${p}</span>`)
     .join('<span class="crumb-sep">›</span>');
 }
 
@@ -377,34 +364,30 @@ document.getElementById('tree-filter').addEventListener('input', (e) => {
   const q = e.target.value.trim().toLowerCase();
   document.querySelectorAll('#file-tree .tree-item').forEach((item) => {
     if (!q) { item.classList.remove('filtered-out'); return; }
-    const match = item.textContent.toLowerCase().includes(q);
-    item.classList.toggle('filtered-out', !match);
+    item.classList.toggle('filtered-out', !item.textContent.toLowerCase().includes(q));
   });
 });
 
 // ---------------- Font size / word wrap controls ----------------
-document.getElementById('font-dec').addEventListener('click', () => {
-  fontSize = Math.max(10, fontSize - 2);
-  editor.updateOptions({ fontSize });
-});
-document.getElementById('font-inc').addEventListener('click', () => {
-  fontSize = Math.min(28, fontSize + 2);
-  editor.updateOptions({ fontSize });
-});
-document.getElementById('wrap-toggle').addEventListener('click', () => {
+function fontDec() { fontSize = Math.max(10, fontSize - 2); editor.updateOptions({ fontSize }); }
+function fontInc() { fontSize = Math.min(28, fontSize + 2); editor.updateOptions({ fontSize }); }
+function toggleWrap() {
   wrapOn = !wrapOn;
   editor.updateOptions({ wordWrap: wrapOn ? 'on' : 'off' });
   document.getElementById('wrap-toggle').textContent = wrapOn ? 'Wrap: On' : 'Wrap: Off';
-});
+}
+function toggleSidebarFn() { document.getElementById('sidebar').classList.toggle('collapsed'); }
+
+document.getElementById('font-dec').addEventListener('click', fontDec);
+document.getElementById('font-inc').addEventListener('click', fontInc);
+document.getElementById('wrap-toggle').addEventListener('click', toggleWrap);
+document.getElementById('toggle-sidebar').addEventListener('click', toggleSidebarFn);
 
 // ---------------- Live preview ----------------
 function joinPath(baseDir, rel) {
   let base = baseDir;
   let path = rel;
-  if (rel.startsWith('/')) {
-    base = ROOT;
-    path = rel.slice(1);
-  }
+  if (rel.startsWith('/')) { base = ROOT; path = rel.slice(1); }
   const stack = base.split('/').filter(Boolean);
   path.split('/').forEach((seg) => {
     if (seg === '..') stack.pop();
@@ -413,9 +396,7 @@ function joinPath(baseDir, rel) {
   return '/' + stack.join('/');
 }
 
-function isLocalRef(src) {
-  return src && !/^(https?:|data:|#|\/\/)/i.test(src);
-}
+function isLocalRef(src) { return src && !/^(https?:|data:|#|\/\/)/i.test(src); }
 
 async function inlineAsset(html, tagRegex, resolver, warnings) {
   let result = html;
@@ -469,36 +450,30 @@ async function buildPreviewHtml(htmlContent, baseDir) {
     if (/<body[^>]*>/i.test(html)) html = html.replace(/<body[^>]*>/i, (m) => m + banner);
     else html = banner + html;
   }
-
   return html;
 }
 
-document.getElementById('btn-preview').addEventListener('click', async () => {
+async function togglePreview() {
   if (!activeTab) { alert('Open a file first.'); return; }
   if (!/\.html?$/i.test(activeTab)) { alert('Preview works on HTML files — open one first.'); return; }
   const htmlContent = openTabs[activeTab].model.getValue();
   const baseDir = activeTab.substring(0, activeTab.lastIndexOf('/'));
   let finalHtml;
-  try {
-    finalHtml = await buildPreviewHtml(htmlContent, baseDir);
-  } catch (e) {
-    finalHtml = htmlContent;
-  }
+  try { finalHtml = await buildPreviewHtml(htmlContent, baseDir); }
+  catch (e) { finalHtml = htmlContent; }
   document.getElementById('preview-frame').srcdoc = finalHtml;
   document.getElementById('preview-panel').classList.remove('hidden');
-});
+}
+document.getElementById('btn-preview').addEventListener('click', togglePreview);
 document.getElementById('close-preview').addEventListener('click', () => {
   document.getElementById('preview-panel').classList.add('hidden');
 });
 
 document.getElementById('save-btn').addEventListener('click', saveActive);
 document.getElementById('save-all-btn').addEventListener('click', saveAll);
-window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveActive(); }
-});
 
 // ---------------- New file / project ----------------
-document.getElementById('new-file-btn').addEventListener('click', async () => {
+async function newFile() {
   const name = prompt(`New file path (relative to ${ROOT}), e.g. notes/todo.md:`);
   if (!name) return;
   const full = joinPath(ROOT, name);
@@ -507,20 +482,138 @@ document.getElementById('new-file-btn').addEventListener('click', async () => {
   } catch (e) { alert('Could not create file: ' + e.message); return; }
   await renderTree(ROOT, document.getElementById('file-tree'));
   openFile(full);
-});
-
-document.getElementById('new-project-btn').addEventListener('click', async () => {
+}
+async function newProject() {
   const name = prompt(`New project name (created inside ${ROOT}):`);
   if (!name) return;
   const full = joinPath(ROOT, name);
-  try {
-    await FS().mkdir({ path: full, recursive: true });
-  } catch (e) { alert('Could not create project: ' + e.message); return; }
+  try { await FS().mkdir({ path: full, recursive: true }); }
+  catch (e) { alert('Could not create project: ' + e.message); return; }
   switchRoot(full);
+}
+document.getElementById('new-file-btn').addEventListener('click', newFile);
+document.getElementById('new-project-btn').addEventListener('click', newProject);
+
+// ---------------- Quick Open (Ctrl+P) ----------------
+let quickOpenFiles = [];
+let quickOpenSelected = 0;
+
+async function collectFilesRecursive(dir, depth, out) {
+  if (out.length >= 300 || depth < 0) return;
+  let entries;
+  try { entries = await listDir(dir); } catch (e) { return; }
+  for (const entry of entries) {
+    if (out.length >= 300) return;
+    const full = `${dir}/${entry.name}`;
+    if (entry.isDir) { if (depth > 0) await collectFilesRecursive(full, depth - 1, out); }
+    else out.push(full);
+  }
+}
+
+async function openQuickOpen() {
+  document.getElementById('quick-open').classList.remove('hidden');
+  const input = document.getElementById('quick-open-input');
+  input.value = '';
+  input.focus();
+  document.getElementById('quick-open-list').innerHTML =
+    `<div class="modal-item modal-dim">Scanning ${ROOT} …</div>`;
+  quickOpenFiles = [];
+  await collectFilesRecursive(ROOT, 6, quickOpenFiles);
+  renderQuickOpenList('');
+}
+function closeQuickOpen() { document.getElementById('quick-open').classList.add('hidden'); }
+
+function renderQuickOpenList(query) {
+  const q = query.trim().toLowerCase();
+  const matches = (q ? quickOpenFiles.filter((f) => f.toLowerCase().includes(q)) : quickOpenFiles).slice(0, 40);
+  quickOpenSelected = 0;
+  const list = document.getElementById('quick-open-list');
+  list.innerHTML = '';
+  if (matches.length === 0) { list.innerHTML = '<div class="modal-item modal-dim">No matches</div>'; return; }
+  matches.forEach((f, i) => {
+    const rel = f.startsWith(ROOT) ? f.slice(ROOT.length + 1) : f;
+    const row = document.createElement('div');
+    row.className = 'modal-item' + (i === 0 ? ' selected' : '');
+    row.textContent = iconFor(f) + ' ' + rel;
+    row.addEventListener('click', () => { closeQuickOpen(); openFile(f); });
+    list.appendChild(row);
+  });
+}
+function updateModalSelection(items, idx) {
+  items.forEach((it, i) => it.classList.toggle('selected', i === idx));
+  if (items[idx]) items[idx].scrollIntoView({ block: 'nearest' });
+}
+document.getElementById('quick-open-input').addEventListener('input', (e) => renderQuickOpenList(e.target.value));
+document.getElementById('quick-open-input').addEventListener('keydown', (e) => {
+  const items = Array.from(document.getElementById('quick-open-list').querySelectorAll('.modal-item'));
+  if (e.key === 'ArrowDown') { e.preventDefault(); quickOpenSelected = Math.min(items.length - 1, quickOpenSelected + 1); updateModalSelection(items, quickOpenSelected); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); quickOpenSelected = Math.max(0, quickOpenSelected - 1); updateModalSelection(items, quickOpenSelected); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (items[quickOpenSelected]) items[quickOpenSelected].click(); }
+  else if (e.key === 'Escape') { closeQuickOpen(); }
+});
+document.getElementById('quick-open').addEventListener('click', (e) => {
+  if (e.target.id === 'quick-open') closeQuickOpen();
 });
 
-document.getElementById('toggle-sidebar').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('collapsed');
+// ---------------- Command Palette (Ctrl+Shift+P) ----------------
+function commandList() {
+  return [
+    { label: 'Save', run: saveActive },
+    { label: 'Save All', run: saveAll },
+    { label: 'New File…', run: newFile },
+    { label: 'New Project…', run: newProject },
+    { label: 'Toggle Preview', run: togglePreview },
+    { label: 'Toggle Sidebar', run: toggleSidebarFn },
+    { label: 'Toggle Word Wrap', run: toggleWrap },
+    { label: 'Increase Font Size', run: fontInc },
+    { label: 'Decrease Font Size', run: fontDec },
+    { label: 'Go to File… (Quick Open)', run: openQuickOpen },
+    { label: 'Go to Full Storage (Home)', run: () => switchRoot(HOME) },
+  ];
+}
+let paletteSelected = 0;
+function openCommandPalette() {
+  document.getElementById('command-palette').classList.remove('hidden');
+  const input = document.getElementById('command-palette-input');
+  input.value = '';
+  input.focus();
+  renderPaletteList('');
+}
+function closeCommandPalette() { document.getElementById('command-palette').classList.add('hidden'); }
+function renderPaletteList(query) {
+  const q = query.trim().toLowerCase();
+  const cmds = commandList().filter((c) => c.label.toLowerCase().includes(q));
+  paletteSelected = 0;
+  const list = document.getElementById('command-palette-list');
+  list.innerHTML = '';
+  if (cmds.length === 0) { list.innerHTML = '<div class="modal-item modal-dim">No matching commands</div>'; return; }
+  cmds.forEach((c, i) => {
+    const row = document.createElement('div');
+    row.className = 'modal-item' + (i === 0 ? ' selected' : '');
+    row.textContent = c.label;
+    row.addEventListener('click', () => { closeCommandPalette(); c.run(); });
+    list.appendChild(row);
+  });
+}
+document.getElementById('command-palette-input').addEventListener('input', (e) => renderPaletteList(e.target.value));
+document.getElementById('command-palette-input').addEventListener('keydown', (e) => {
+  const items = Array.from(document.getElementById('command-palette-list').querySelectorAll('.modal-item'));
+  if (e.key === 'ArrowDown') { e.preventDefault(); paletteSelected = Math.min(items.length - 1, paletteSelected + 1); updateModalSelection(items, paletteSelected); }
+  else if (e.key === 'ArrowUp') { e.preventDefault(); paletteSelected = Math.max(0, paletteSelected - 1); updateModalSelection(items, paletteSelected); }
+  else if (e.key === 'Enter') { e.preventDefault(); if (items[paletteSelected]) items[paletteSelected].click(); }
+  else if (e.key === 'Escape') { closeCommandPalette(); }
+});
+document.getElementById('command-palette').addEventListener('click', (e) => {
+  if (e.target.id === 'command-palette') closeCommandPalette();
+});
+
+// ---------------- Global shortcuts ----------------
+window.addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openCommandPalette(); return; }
+  if (mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openQuickOpen(); return; }
+  if (mod && e.key === 's') { e.preventDefault(); saveActive(); return; }
+  if (e.key === 'Escape') { closeQuickOpen(); closeCommandPalette(); }
 });
 
 window.addEventListener('beforeunload', (e) => {
