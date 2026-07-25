@@ -556,6 +556,15 @@ document.getElementById('quick-open').addEventListener('click', (e) => {
 });
 
 // ---------------- Command Palette (Ctrl+Shift+P) ----------------
+function runEditorCommand(id) {
+  try {
+    const action = editor.getAction(id);
+    if (action) { action.run(); editor.focus(); return; }
+    editor.trigger('commandPalette', id, null);
+  } catch (e) { /* command unavailable in this Monaco build — ignore quietly */ }
+  editor.focus();
+}
+
 function commandList() {
   return [
     { label: 'Save', run: saveActive },
@@ -569,6 +578,20 @@ function commandList() {
     { label: 'Decrease Font Size', run: fontDec },
     { label: 'Go to File… (Quick Open)', run: openQuickOpen },
     { label: 'Go to Full Storage (Home)', run: () => switchRoot(HOME) },
+    // Editing actions — the keyboard-free way to reach what would
+    // otherwise need Ctrl-combos on a physical keyboard.
+    { label: 'Find', run: () => runEditorCommand('actions.find') },
+    { label: 'Find & Replace', run: () => runEditorCommand('editor.action.startFindReplaceAction') },
+    { label: 'Toggle Line Comment', run: () => runEditorCommand('editor.action.commentLine') },
+    { label: 'Indent Selection', run: () => runEditorCommand('editor.action.indentLines') },
+    { label: 'Outdent Selection', run: () => runEditorCommand('editor.action.outdentLines') },
+    { label: 'Move Line Up', run: () => runEditorCommand('editor.action.moveLinesUpAction') },
+    { label: 'Move Line Down', run: () => runEditorCommand('editor.action.moveLinesDownAction') },
+    { label: 'Duplicate Line Down', run: () => runEditorCommand('editor.action.copyLinesDownAction') },
+    { label: 'Delete Line', run: () => runEditorCommand('editor.action.deleteLines') },
+    { label: 'Select All', run: () => { const m = editor.getModel(); if (m) editor.setSelection(m.getFullModelRange()); editor.focus(); } },
+    { label: 'Undo', run: () => runEditorCommand('undo') },
+    { label: 'Redo', run: () => runEditorCommand('redo') },
   ];
 }
 let paletteSelected = 0;
@@ -606,6 +629,9 @@ document.getElementById('command-palette-input').addEventListener('keydown', (e)
 document.getElementById('command-palette').addEventListener('click', (e) => {
   if (e.target.id === 'command-palette') closeCommandPalette();
 });
+
+document.getElementById('quick-open-btn').addEventListener('click', openQuickOpen);
+document.getElementById('command-palette-btn').addEventListener('click', openCommandPalette);
 
 // ---------------- Global shortcuts ----------------
 window.addEventListener('keydown', (e) => {
