@@ -22,6 +22,17 @@
       <button id="command-palette-btn" title="Run any editor command by tap">Commands</button>
     </div>
   </div>
+  <div id="extra-keys">
+    <button id="key-shift" class="modkey" title="Sticky Shift: makes the next Home/End/Arrow tap select instead of just move">SHIFT</button>
+    <button id="key-ctrl" class="modkey" title="Sticky Ctrl: makes the next Left/Right tap jump by word">CTRL</button>
+    <button id="key-home">HOME</button>
+    <button id="key-end">END</button>
+    <button id="key-left">←</button>
+    <button id="key-up">↑</button>
+    <button id="key-down">↓</button>
+    <button id="key-right">→</button>
+    <button id="key-tab">TAB</button>
+  </div>
   <div id="main">
     <div id="sidebar">
       <div id="sidebar-header">
@@ -80,6 +91,15 @@
       <div class="modal-hint">Esc to close · Enter to run</div>
     </div>
   </div>
+
+  <div id="action-sheet" class="hidden modal-overlay">
+    <div class="modal-box">
+      <div id="action-sheet-title" class="modal-title"></div>
+      <div id="action-sheet-list" class="modal-list"></div>
+    </div>
+  </div>
+
+  <div id="toast-msg"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
   <script src="app.js"></script>

@@ -152,6 +152,25 @@ body {
 .modal-item.modal-dim { color: var(--text-dim); cursor: default; }
 .modal-item.modal-dim:hover { background: transparent; color: var(--text-dim); }
 .modal-hint { padding: 6px 12px; font-size: 10px; color: var(--text-dim); border-top: 1px solid var(--border); text-align: right; }
+.modal-title { padding: 12px; font-size: 13px; color: var(--text); border-bottom: 1px solid var(--border); font-weight: 600; }
+
+#extra-keys {
+  display: flex; gap: 4px; padding: 6px 8px; background: #252526;
+  border-bottom: 1px solid var(--border); overflow-x: auto; flex-shrink: 0;
+}
+#extra-keys button {
+  flex-shrink: 0; background: #3c3c3c; color: var(--text); border: 1px solid var(--border);
+  border-radius: 3px; padding: 7px 10px; font-size: 11px; cursor: pointer; min-width: 40px;
+}
+#extra-keys button:hover { background: var(--hover); }
+#extra-keys button.modkey.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+#toast-msg {
+  position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: rgba(20,20,20,0.95); color: #fff; padding: 9px 16px; border-radius: 20px;
+  font-size: 12px; z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+}
+#toast-msg.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 #breadcrumb {
   padding: 5px 10px; font-size: 10px; color: var(--text-dim);

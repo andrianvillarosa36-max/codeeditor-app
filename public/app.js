@@ -12,15 +12,18 @@ let fontSize = 14;
 let wrapOn = false; // nano-style default: lines run off-screen, scroll sideways to read
 let autoClosing = false; // reentrancy guard for the auto-close-tag feature
 let pasteGuardUntil = 0; // suppress auto-close for a moment after any paste
+let suppressNextClick = false; // set true right before a long-press fires, to swallow the trailing click
 
 let ROOT = '/storage/emulated/0';
 const HOME = '/storage/emulated/0';
 
 const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp']);
 function isImage(name) { return IMAGE_EXTS.has(name.split('.').pop().toLowerCase()); }
+const IMAGE_FOLDER_NAMES = new Set(['images', 'img', 'imgs', 'assets', 'icons', 'pictures', 'photos']);
 
 function FS() { return Capacitor.Plugins.Filesystem; }
 function StoragePermission() { return Capacitor.Plugins.StoragePermission; }
+function Clip() { return Capacitor.Plugins.Clipboard; }
 
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
 require(['vs/editor/editor.main'], () => {
@@ -36,11 +39,12 @@ require(['vs/editor/editor.main'], () => {
     scrollBeyondLastLine: false,
     autoIndent: 'keep',
   });
+
   // Mobile paste can arrive as a burst of individual character insertions
   // rather than one clean block, which fooled the auto-close-tag feature
-  // into firing mid-paste. Suppress it for a moment around any paste,
-  // regardless of how the paste itself gets delivered underneath.
+  // into firing mid-paste. Suppress it for a moment around any paste.
   editor.onDidPaste(() => { pasteGuardUntil = Date.now() + 1000; });
+
   editor.onDidChangeModelContent((e) => {
     if (activeTab && openTabs[activeTab] && openTabs[activeTab].type === 'text') {
       openTabs[activeTab].dirty = true;
@@ -48,6 +52,17 @@ require(['vs/editor/editor.main'], () => {
     }
     if (!autoClosing) maybeAutoCloseTag(e);
   });
+
+  // "!" + Tab expands to a full HTML5 boilerplate (Emmet-style), the one
+  // specific abbreviation explicitly asked for. A full Emmet abbreviation
+  // engine (div.class>ul>li*3 etc.) is a much bigger separate library and
+  // isn't included here.
+  editor.onKeyDown((e) => {
+    if (e.keyCode === monaco.KeyCode.Tab && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (tryEmmetExpand()) { e.preventDefault(); e.stopPropagation(); }
+    }
+  });
+
   boot();
 });
 
@@ -87,6 +102,34 @@ function maybeAutoCloseTag(e) {
   }
 }
 
+// "!" on its own line, then Tab -> full HTML5 boilerplate, cursor inside <body>.
+function tryEmmetExpand() {
+  const model = editor.getModel();
+  if (!model || model.getLanguageId() !== 'html') return false;
+  const pos = editor.getPosition();
+  const lineContent = model.getLineContent(pos.lineNumber);
+  if (lineContent.trim() !== '!') return false;
+
+  const range = new monaco.Range(pos.lineNumber, 1, pos.lineNumber, lineContent.length + 1);
+  const snippetLines = [
+    '<!DOCTYPE html>',
+    '<html lang="en">',
+    '<head>',
+    '    <meta charset="UTF-8">',
+    '    <meta name="viewport" content="width=device-width, initial-scale=1.0">',
+    '    <title>Document</title>',
+    '</head>',
+    '<body>',
+    '    ',
+    '</body>',
+    '</html>',
+  ];
+  editor.executeEdits('emmet-boilerplate', [{ range, text: snippetLines.join('\n'), forceMoveMarkers: true }]);
+  editor.setPosition({ lineNumber: pos.lineNumber + 8, column: 5 });
+  editor.focus();
+  return true;
+}
+
 function langFromExt(name) {
   const ext = name.split('.').pop().toLowerCase();
   const map = {
@@ -113,6 +156,16 @@ const MIME_BY_EXT = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   svg: 'image/svg+xml', webp: 'image/webp', ico: 'image/x-icon', bmp: 'image/bmp',
 };
+
+// ---------------- Toast (lightweight, non-blocking feedback) ----------------
+let toastTimer = null;
+function showToast(msg) {
+  const el = document.getElementById('toast-msg');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+}
 
 // ---------------- Permission gating ----------------
 async function boot() {
@@ -151,6 +204,20 @@ async function startEditor() {
   await renderTree(ROOT, document.getElementById('file-tree'));
 }
 
+// ---------------- Long-press detection (for the Rename/Move/Delete sheet) ----------------
+function longPress(el, callback) {
+  let timer = null;
+  const start = () => { timer = setTimeout(() => { suppressNextClick = true; callback(); }, 550); };
+  const cancel = () => clearTimeout(timer);
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', cancel);
+  el.addEventListener('touchmove', cancel);
+  el.addEventListener('touchcancel', cancel);
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', cancel);
+  el.addEventListener('mouseleave', cancel);
+}
+
 // ---------------- File tree ----------------
 async function listDir(absPath) {
   const res = await FS().readdir({ path: absPath });
@@ -158,6 +225,10 @@ async function listDir(absPath) {
     .map((f) => ({ name: f.name, isDir: f.type === 'directory' }))
     .filter((f) => !f.name.startsWith('.'))
     .sort((a, b) => (a.isDir === b.isDir) ? a.name.localeCompare(b.name) : (a.isDir ? -1 : 1));
+}
+
+function folderIcon(name) {
+  return IMAGE_FOLDER_NAMES.has(name.toLowerCase()) ? '🖼️' : '📁';
 }
 
 async function renderTree(absPath, container) {
@@ -175,7 +246,7 @@ async function renderTree(absPath, container) {
 
       const label = document.createElement('span');
       label.className = 'tree-label';
-      label.textContent = '📁 ' + entry.name;
+      label.textContent = folderIcon(entry.name) + ' ' + entry.name;
       row.appendChild(label);
 
       const openBtn = document.createElement('button');
@@ -194,15 +265,22 @@ async function renderTree(absPath, container) {
       childContainer.style.display = 'none';
       label.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (suppressNextClick) { suppressNextClick = false; return; }
         expanded = !expanded;
         childContainer.style.display = expanded ? 'block' : 'none';
         if (expanded) renderTree(full, childContainer);
       });
+      longPress(label, () => showFileActions(full, entry.name, true));
       container.appendChild(item);
       container.appendChild(childContainer);
     } else {
       item.textContent = iconFor(entry.name) + ' ' + entry.name;
-      item.addEventListener('click', (e) => { e.stopPropagation(); openFile(full); });
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (suppressNextClick) { suppressNextClick = false; return; }
+        openFile(full);
+      });
+      longPress(item, () => showFileActions(full, entry.name, false));
       container.appendChild(item);
     }
   });
@@ -213,6 +291,81 @@ async function renderTree(absPath, container) {
     empty.textContent = '(empty)';
     container.appendChild(empty);
   }
+}
+
+// ---------------- Rename / Move / Delete (long-press action sheet) ----------------
+function showActionSheet(title, actions) {
+  document.getElementById('action-sheet-title').textContent = title;
+  const list = document.getElementById('action-sheet-list');
+  list.innerHTML = '';
+  actions.forEach((a) => {
+    const row = document.createElement('div');
+    row.className = 'modal-item';
+    row.textContent = a.label;
+    row.addEventListener('click', () => { closeActionSheet(); a.run(); });
+    list.appendChild(row);
+  });
+  document.getElementById('action-sheet').classList.remove('hidden');
+}
+function closeActionSheet() { document.getElementById('action-sheet').classList.add('hidden'); }
+document.getElementById('action-sheet').addEventListener('click', (e) => {
+  if (e.target.id === 'action-sheet') closeActionSheet();
+});
+
+function showFileActions(absPath, name, isDir) {
+  showActionSheet(name, [
+    { label: '✏️  Rename', run: () => renameItem(absPath) },
+    { label: '📦  Move to…', run: () => moveItem(absPath) },
+    { label: '🗑️  Delete', run: () => deleteItem(absPath, name, isDir) },
+  ]);
+}
+
+function retagOpenTab(oldPath, newPath) {
+  if (!openTabs[oldPath]) return;
+  openTabs[newPath] = openTabs[oldPath];
+  delete openTabs[oldPath];
+  if (activeTab === oldPath) activeTab = newPath;
+  renderTabs();
+}
+
+async function renameItem(absPath) {
+  const oldName = absPath.split('/').pop();
+  const newName = prompt('Rename to:', oldName);
+  if (!newName || newName === oldName) return;
+  const parentDir = absPath.substring(0, absPath.lastIndexOf('/'));
+  const newPath = `${parentDir}/${newName}`;
+  try {
+    await FS().rename({ from: absPath, to: newPath });
+    retagOpenTab(absPath, newPath);
+    showToast('Renamed');
+    renderTree(ROOT, document.getElementById('file-tree'));
+  } catch (e) { alert('Rename failed: ' + e.message); }
+}
+
+async function moveItem(absPath) {
+  const name = absPath.split('/').pop();
+  const destDir = prompt(`Move "${name}" into which folder? (path relative to ${ROOT}, blank = ${ROOT} itself)`, '');
+  if (destDir === null) return;
+  const destAbs = joinPath(ROOT, destDir || '.');
+  const newPath = `${destAbs}/${name}`;
+  try {
+    await FS().mkdir({ path: destAbs, recursive: true }).catch(() => {}); // fine if it already exists
+    await FS().rename({ from: absPath, to: newPath });
+    retagOpenTab(absPath, newPath);
+    showToast('Moved');
+    renderTree(ROOT, document.getElementById('file-tree'));
+  } catch (e) { alert('Move failed: ' + e.message); }
+}
+
+async function deleteItem(absPath, name, isDir) {
+  if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+  try {
+    if (isDir) await FS().rmdir({ path: absPath, recursive: true });
+    else await FS().deleteFile({ path: absPath });
+    if (openTabs[absPath]) closeTab(absPath);
+    showToast('Deleted');
+    renderTree(ROOT, document.getElementById('file-tree'));
+  } catch (e) { alert('Delete failed: ' + e.message); }
 }
 
 // ---------------- Open / tabs ----------------
@@ -348,6 +501,40 @@ function flashSaved(btnId) {
   setTimeout(() => { btn.textContent = old; }, 900);
 }
 
+// ---------------- Clipboard (Copy / Cut / Paste) ----------------
+async function copySelection() {
+  const sel = editor.getSelection();
+  const model = editor.getModel();
+  if (!sel || !model) return;
+  const text = model.getValueInRange(sel);
+  if (!text) { showToast('Nothing selected'); return; }
+  try { await Clip().write({ string: text }); showToast('Copied'); }
+  catch (e) { alert('Copy failed: ' + e.message); }
+}
+async function cutSelection() {
+  const sel = editor.getSelection();
+  const model = editor.getModel();
+  if (!sel || !model) return;
+  const text = model.getValueInRange(sel);
+  if (!text) { showToast('Nothing selected'); return; }
+  try {
+    await Clip().write({ string: text });
+    editor.executeEdits('cut', [{ range: sel, text: '', forceMoveMarkers: true }]);
+    showToast('Cut');
+  } catch (e) { alert('Cut failed: ' + e.message); }
+}
+async function pasteClipboard() {
+  try {
+    const res = await Clip().read();
+    const text = res && res.value ? res.value : '';
+    if (!text) { showToast('Clipboard is empty'); return; }
+    const sel = editor.getSelection();
+    editor.executeEdits('paste', [{ range: sel, text, forceMoveMarkers: true }]);
+    editor.focus();
+    showToast('Pasted');
+  } catch (e) { alert('Paste failed: ' + e.message); }
+}
+
 // ---------------- Breadcrumb ----------------
 function renderBreadcrumb(absPath) {
   const el = document.getElementById('breadcrumb');
@@ -383,6 +570,42 @@ document.getElementById('font-inc').addEventListener('click', fontInc);
 document.getElementById('wrap-toggle').addEventListener('click', toggleWrap);
 document.getElementById('toggle-sidebar').addEventListener('click', toggleSidebarFn);
 
+// ---------------- Extra-keys row (Home/End/Arrows/Tab + sticky Shift/Ctrl) ----------------
+let stickyShift = false;
+let stickyCtrl = false;
+
+function updateModKeyVisuals() {
+  document.getElementById('key-shift').classList.toggle('active', stickyShift);
+  document.getElementById('key-ctrl').classList.toggle('active', stickyCtrl);
+}
+function consumeMods() {
+  const m = { shift: stickyShift, ctrl: stickyCtrl };
+  stickyShift = false; stickyCtrl = false;
+  updateModKeyVisuals();
+  return m;
+}
+document.getElementById('key-shift').addEventListener('click', () => { stickyShift = !stickyShift; updateModKeyVisuals(); editor.focus(); });
+document.getElementById('key-ctrl').addEventListener('click', () => { stickyCtrl = !stickyCtrl; updateModKeyVisuals(); editor.focus(); });
+
+function navCommand(base, selectVariant, wordVariant, wordSelectVariant) {
+  const { shift, ctrl } = consumeMods();
+  let id = base;
+  if (ctrl && shift && wordSelectVariant) id = wordSelectVariant;
+  else if (ctrl && wordVariant) id = wordVariant;
+  else if (shift && selectVariant) id = selectVariant;
+  runEditorCommand(id);
+}
+document.getElementById('key-home').addEventListener('click', () => navCommand('cursorHome', 'cursorHomeSelect'));
+document.getElementById('key-end').addEventListener('click', () => navCommand('cursorEnd', 'cursorEndSelect'));
+document.getElementById('key-left').addEventListener('click', () => navCommand('cursorLeft', 'cursorLeftSelect', 'cursorWordLeft', 'cursorWordLeftSelect'));
+document.getElementById('key-right').addEventListener('click', () => navCommand('cursorRight', 'cursorRightSelect', 'cursorWordRight', 'cursorWordRightSelect'));
+document.getElementById('key-up').addEventListener('click', () => navCommand('cursorUp', 'cursorUpSelect'));
+document.getElementById('key-down').addEventListener('click', () => navCommand('cursorDown', 'cursorDownSelect'));
+document.getElementById('key-tab').addEventListener('click', () => {
+  consumeMods();
+  if (!tryEmmetExpand()) runEditorCommand('tab');
+});
+
 // ---------------- Live preview ----------------
 function joinPath(baseDir, rel) {
   let base = baseDir;
@@ -394,6 +617,18 @@ function joinPath(baseDir, rel) {
     else if (seg !== '.' && seg !== '') stack.push(seg);
   });
   return '/' + stack.join('/');
+}
+
+function relativePath(fromDir, toAbs) {
+  const fromParts = fromDir.split('/').filter(Boolean);
+  const toParts = toAbs.split('/').filter(Boolean);
+  let i = 0;
+  while (i < fromParts.length && i < toParts.length && fromParts[i] === toParts[i]) i++;
+  const ups = fromParts.length - i;
+  const downs = toParts.slice(i);
+  const relParts = [];
+  for (let k = 0; k < ups; k++) relParts.push('..');
+  return relParts.concat(downs).join('/');
 }
 
 function isLocalRef(src) { return src && !/^(https?:|data:|#|\/\/)/i.test(src); }
@@ -494,9 +729,10 @@ async function newProject() {
 document.getElementById('new-file-btn').addEventListener('click', newFile);
 document.getElementById('new-project-btn').addEventListener('click', newProject);
 
-// ---------------- Quick Open (Ctrl+P) ----------------
+// ---------------- Quick Open (Ctrl+P) / Insert Image ----------------
 let quickOpenFiles = [];
 let quickOpenSelected = 0;
+let quickOpenMode = 'open'; // 'open' | 'insert-image'
 
 async function collectFilesRecursive(dir, depth, out) {
   if (out.length >= 300 || depth < 0) return;
@@ -510,18 +746,35 @@ async function collectFilesRecursive(dir, depth, out) {
   }
 }
 
-async function openQuickOpen() {
+async function openQuickOpen(mode = 'open') {
+  quickOpenMode = mode;
   document.getElementById('quick-open').classList.remove('hidden');
   const input = document.getElementById('quick-open-input');
+  input.placeholder = mode === 'insert-image' ? 'Pick an image to insert…' : 'Go to file… (type a name)';
   input.value = '';
   input.focus();
   document.getElementById('quick-open-list').innerHTML =
     `<div class="modal-item modal-dim">Scanning ${ROOT} …</div>`;
   quickOpenFiles = [];
   await collectFilesRecursive(ROOT, 6, quickOpenFiles);
+  if (mode === 'insert-image') quickOpenFiles = quickOpenFiles.filter((f) => isImage(f));
   renderQuickOpenList('');
 }
 function closeQuickOpen() { document.getElementById('quick-open').classList.add('hidden'); }
+
+function insertImageTag(imgAbsPath) {
+  if (!activeTab || openTabs[activeTab].type !== 'text') {
+    alert('Open a text file first, place your cursor where you want the image, then try again.');
+    return;
+  }
+  const baseDir = activeTab.substring(0, activeTab.lastIndexOf('/'));
+  const rel = relativePath(baseDir, imgAbsPath);
+  const sel = editor.getSelection();
+  const tag = `<img src="${rel}" alt="">`;
+  editor.executeEdits('insertImage', [{ range: sel, text: tag, forceMoveMarkers: true }]);
+  editor.focus();
+  showToast('Image tag inserted');
+}
 
 function renderQuickOpenList(query) {
   const q = query.trim().toLowerCase();
@@ -535,7 +788,11 @@ function renderQuickOpenList(query) {
     const row = document.createElement('div');
     row.className = 'modal-item' + (i === 0 ? ' selected' : '');
     row.textContent = iconFor(f) + ' ' + rel;
-    row.addEventListener('click', () => { closeQuickOpen(); openFile(f); });
+    row.addEventListener('click', () => {
+      closeQuickOpen();
+      if (quickOpenMode === 'insert-image') insertImageTag(f);
+      else openFile(f);
+    });
     list.appendChild(row);
   });
 }
@@ -554,6 +811,7 @@ document.getElementById('quick-open-input').addEventListener('keydown', (e) => {
 document.getElementById('quick-open').addEventListener('click', (e) => {
   if (e.target.id === 'quick-open') closeQuickOpen();
 });
+document.getElementById('quick-open-btn').addEventListener('click', () => openQuickOpen('open'));
 
 // ---------------- Command Palette (Ctrl+Shift+P) ----------------
 function runEditorCommand(id) {
@@ -576,10 +834,12 @@ function commandList() {
     { label: 'Toggle Word Wrap', run: toggleWrap },
     { label: 'Increase Font Size', run: fontInc },
     { label: 'Decrease Font Size', run: fontDec },
-    { label: 'Go to File… (Quick Open)', run: openQuickOpen },
+    { label: 'Go to File… (Quick Open)', run: () => openQuickOpen('open') },
+    { label: 'Insert Image…', run: () => openQuickOpen('insert-image') },
     { label: 'Go to Full Storage (Home)', run: () => switchRoot(HOME) },
-    // Editing actions — the keyboard-free way to reach what would
-    // otherwise need Ctrl-combos on a physical keyboard.
+    { label: 'Copy', run: copySelection },
+    { label: 'Cut', run: cutSelection },
+    { label: 'Paste', run: pasteClipboard },
     { label: 'Find', run: () => runEditorCommand('actions.find') },
     { label: 'Find & Replace', run: () => runEditorCommand('editor.action.startFindReplaceAction') },
     { label: 'Toggle Line Comment', run: () => runEditorCommand('editor.action.commentLine') },
@@ -629,17 +889,15 @@ document.getElementById('command-palette-input').addEventListener('keydown', (e)
 document.getElementById('command-palette').addEventListener('click', (e) => {
   if (e.target.id === 'command-palette') closeCommandPalette();
 });
-
-document.getElementById('quick-open-btn').addEventListener('click', openQuickOpen);
 document.getElementById('command-palette-btn').addEventListener('click', openCommandPalette);
 
 // ---------------- Global shortcuts ----------------
 window.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openCommandPalette(); return; }
-  if (mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openQuickOpen(); return; }
+  if (mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openQuickOpen('open'); return; }
   if (mod && e.key === 's') { e.preventDefault(); saveActive(); return; }
-  if (e.key === 'Escape') { closeQuickOpen(); closeCommandPalette(); }
+  if (e.key === 'Escape') { closeQuickOpen(); closeCommandPalette(); closeActionSheet(); }
 });
 
 window.addEventListener('beforeunload', (e) => {
