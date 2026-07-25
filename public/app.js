@@ -9,7 +9,8 @@ let editor;
 const openTabs = {}; // absPath -> { type: 'text'|'image', model?, dataUri?, dirty }
 let activeTab = null;
 let fontSize = 14;
-let wrapOn = true;
+let wrapOn = false; // nano-style default: lines run off-screen, scroll sideways to read
+let autoClosing = false; // reentrancy guard for the auto-close-tag feature
 
 let ROOT = '/storage/emulated/0';
 const HOME = '/storage/emulated/0';
@@ -29,25 +30,65 @@ require(['vs/editor/editor.main'], () => {
     automaticLayout: true,
     fontSize,
     minimap: { enabled: window.innerWidth > 700 },
-    wordWrap: 'on',
+    wordWrap: wrapOn ? 'on' : 'off',
     // 'none' keeps wrapped continuation lines flush with the left edge
-    // instead of matching the original line's (often deep) indentation —
-    // on a narrow phone screen that indentation was eating most of the
-    // width and causing a cascading "staircase" effect on long lines.
+    // instead of matching the original line's (often deep) indentation,
+    // for the rare case wrap does get turned back on.
     wrappingIndent: 'none',
+    // Nano-style: no vertical indent-guide lines cluttering the view.
+    guides: { indentation: false, highlightActiveIndentation: false },
     scrollBeyondLastLine: false,
     // Keep pasted text exactly as-is instead of Monaco re-indenting each
     // line based on language heuristics.
     autoIndent: 'keep',
   });
-  editor.onDidChangeModelContent(() => {
+  editor.onDidChangeModelContent((e) => {
     if (activeTab && openTabs[activeTab] && openTabs[activeTab].type === 'text') {
       openTabs[activeTab].dirty = true;
       renderTabs();
     }
+    if (!autoClosing) maybeAutoCloseTag(e);
   });
   boot();
 });
+
+// Void/self-closing HTML elements that never get a closing tag.
+const VOID_ELEMENTS = new Set([
+  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
+  'link', 'meta', 'param', 'source', 'track', 'wbr',
+]);
+
+// When the user finishes typing an opening tag like "<body>", insert the
+// matching "</body>" right after the cursor, with the cursor left sitting
+// between the two tags so they can keep typing content normally.
+function maybeAutoCloseTag(e) {
+  const model = editor.getModel();
+  if (!model || model.getLanguageId() !== 'html') return;
+  if (e.isFlush) return; // whole-document replace (opening a file) — not a keystroke
+
+  for (const change of e.changes) {
+    if (change.text !== '>' || change.rangeLength !== 0) continue;
+
+    const line = change.range.startLineNumber;
+    const gtColumn = change.range.startColumn; // column where '>' was inserted
+    const preText = model.getLineContent(line).substring(0, gtColumn - 1); // text before that '>', excluding it
+
+    const match = preText.match(/<([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^<>]*)?)$/);
+    if (!match) continue;
+
+    const tagName = match[1].toLowerCase();
+    const attrs = match[2] || '';
+    if (attrs.trim().endsWith('/')) continue; // self-closed, e.g. <img />
+    if (VOID_ELEMENTS.has(tagName)) continue;
+
+    const insertCol = gtColumn + 1; // right after the '>' we just typed
+    const insertPos = new monaco.Range(line, insertCol, line, insertCol);
+    autoClosing = true;
+    editor.executeEdits('autoCloseTag', [{ range: insertPos, text: `</${tagName}>`, forceMoveMarkers: true }],
+      [new monaco.Selection(line, insertCol, line, insertCol)]);
+    autoClosing = false;
+  }
+}
 
 function langFromExt(name) {
   const ext = name.split('.').pop().toLowerCase();
