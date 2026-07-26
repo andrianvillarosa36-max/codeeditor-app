@@ -1,11 +1,11 @@
-# Code Editor — standalone Android app
+# COODEV — standalone Android code editor
 
 A real file editor for your phone, packaged as a self-contained APK.
-No Termux, no background server — the app talks to Android's storage
-directly using Capacitor's Filesystem plugin plus a small native
-plugin that requests "All files access" (the same permission real
-file manager apps use). Editing itself is powered by Monaco, the
-same engine VS Code uses.
+No Termux, no background server required to use it — the app talks to
+Android's storage directly using Capacitor's Filesystem plugin plus a
+small native plugin that requests "All files access" (the same
+permission real file manager apps use). Editing itself is powered by
+Monaco, the same engine VS Code uses.
 
 ## Part 1 — Build the APK
 
@@ -16,55 +16,86 @@ pre-installed there), so nothing heavy needs installing on your phone.
 ```bash
 cd ~/apps/codeeditor-app
 git add -A
-git commit -m "Standalone version — no Termux dependency"
+git commit -m "Update COODEV"
 git push
 ```
-(If this is a brand new repo you haven't pushed before, see the full
-`git init` / `git remote add` steps from earlier — same process.)
+(If this is a brand new repo you haven't pushed before: `git init`,
+`git remote add origin <repo-url>`, then the commands above.)
 
 Then on github.com → your repo → **Actions** tab, wait for the
 "Build APK" run to finish (green check), open it, and download the
-`code-editor-debug-apk` artifact from **Artifacts**. Unzip it to get
+`coodev-debug-apk` artifact from **Artifacts**. Unzip it to get
 `app-debug.apk`.
 
 ## Part 2 — Install it
 
 Tap the APK on your phone, allow installs from that source if asked,
-install. You'll get a **Code Editor** app icon.
+install. You'll get a **COODEV** app icon.
 
 ## Part 3 — First launch
 
 The first time you open the app, it'll ask for storage access:
 
-1. Tap **Grant Access** — this opens Android's permission settings
-   for the app.
+1. Tap **Grant Access** — opens Android's permission settings for the app.
 2. Flip the **"Allow access to manage all files"** toggle on.
-3. Go back to the Code Editor app and tap **Continue**.
+3. Go back to COODEV and tap **Continue**.
 
 After that one-time step, the app opens straight into your phone's
-storage (`/storage/emulated/0`) every time — fully independent of
-Termux, no server to start, nothing running in the background.
+storage (`/storage/emulated/0`) every time.
 
-## Using it
+## Features
 
-- Tap a folder to expand it, tap a file to open it in a tab
-- **Ctrl+S** (external keyboard) or the **Save** button writes the
-  file back to disk for real
-- **+ File** / **+ Folder** create new files/folders — give a path
-  relative to your storage root (e.g. `Documents/notes/todo.md`)
-- Tabs show a dot (●) when there are unsaved changes
-- The ☰ button toggles the sidebar
+- **File tree** with type icons, a filter box, and a 🖼️ icon for
+  images/assets folders. Long-press any file or folder for
+  **Rename / Move to… / Delete**.
+- **Tabs**, an Open Editors list, breadcrumbs, and an image viewer
+  for png/jpg/gif/svg/webp files.
+- **Live Preview** for HTML files — resolves linked CSS/JS/images
+  automatically, with a 📱/🖥️ toggle to check mobile vs desktop
+  widths.
+- **Save** (active file) and **Save All** (every dirty tab).
+- **Copy / Cut / Paste** through the real Android clipboard (Command
+  Palette, or a physical keyboard's usual shortcuts).
+- **Go to File** (`Ctrl+P`) and **Commands** (`Ctrl+Shift+P`) — search
+  by name or run any action by tap, no keyboard required.
+- **Extra-keys row**: HOME/END/arrows/TAB, plus sticky SHIFT/CTRL
+  toggles for select-by-arrow and jump-by-word.
+- **Auto-closing tags**, and Emmet-style abbreviations on Tab:
+  `!` → full HTML5 boilerplate, `tag.class#id` → that element
+  (e.g. `nav.navbar` → `<nav class="navbar"></nav>`). This covers
+  single elements, not full Emmet nesting like `ul>li*3`.
+- **Insert Image…** — picks an image from your project and inserts
+  the right reference for the file you're in (`<img>` in HTML,
+  `url(...)` in CSS).
+- **Local Server** — see below.
+
+## Local Server
+
+*Start Local Server* (Command Palette) launches a small embedded HTTP
+server, serving whatever folder is your current project root at
+`http://127.0.0.1:8091`. The URL is copied to your clipboard
+automatically. This gives you a real server (not just the in-app
+Preview) — useful for anything that behaves differently under `file://`
+vs `http://`, or for pointing another tool at it.
+
+Want it reachable from outside your phone (e.g. to show someone a
+live link)? Termux can still tunnel it out — this is the one piece
+that stays there, since bundling a tool like `cloudflared` directly
+into the app means shipping a whole separate compiled binary per CPU
+architecture, which is a different level of complexity than anything
+else here:
+```bash
+pkg install cloudflared
+cloudflared tunnel --url http://127.0.0.1:8091
+```
+*Stop Local Server* shuts it down.
 
 ## Notes
 
-- This is a debug-signed APK — great for your own phone, not
-  suitable for Play Store distribution as-is (needs a release
-  signing key, and Play policy restricts apps requesting this broad
-  a storage permission without a specific approved use case).
-- Monaco still loads from a CDN on first open, so the very first
-  launch needs internet; after the WebView caches it, it typically
-  keeps working offline too, though this isn't guaranteed the way a
-  proper offline bundle would be.
-- If you ever want the old Termux-server version back (e.g. to run
-  the editor from a laptop browser too), that's the separate
-  `codeeditor` project — this app doesn't touch or depend on it.
+- Debug-signed APK — fine for your own phone, not Play-Store-ready
+  as-is (needs a release signing key, and Play policy restricts this
+  broad a storage permission without an approved use case).
+- Monaco loads from a CDN on first open, so the very first launch
+  needs internet; it typically keeps working offline after that via
+  WebView caching, though that's not a guarantee the way a bundled
+  offline copy would be.

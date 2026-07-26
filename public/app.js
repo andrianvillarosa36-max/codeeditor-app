@@ -24,6 +24,7 @@ const IMAGE_FOLDER_NAMES = new Set(['images', 'img', 'imgs', 'assets', 'icons', 
 function FS() { return Capacitor.Plugins.Filesystem; }
 function StoragePermission() { return Capacitor.Plugins.StoragePermission; }
 function Clip() { return Capacitor.Plugins.Clipboard; }
+function LocalServer() { return Capacitor.Plugins.LocalServer; }
 
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
 require(['vs/editor/editor.main'], () => {
@@ -606,6 +607,28 @@ async function pasteClipboard() {
   } catch (e) { alert('Paste failed: ' + e.message); }
 }
 
+// ---------------- Local server (serves the current project over real HTTP) ----------------
+let localServerUrl = null;
+const LOCAL_SERVER_PORT = 8091;
+
+async function startLocalServer() {
+  try {
+    const res = await LocalServer().start({ root: ROOT, port: LOCAL_SERVER_PORT });
+    localServerUrl = res.url;
+    try { await Clip().write({ string: localServerUrl }); } catch (e) { /* clipboard is a nice-to-have here */ }
+    showToast(`Serving ${ROOT} at ${localServerUrl} (copied)`);
+  } catch (e) {
+    alert('Could not start server: ' + e.message);
+  }
+}
+async function stopLocalServer() {
+  try {
+    await LocalServer().stop();
+    localServerUrl = null;
+    showToast('Server stopped');
+  } catch (e) { alert('Could not stop server: ' + e.message); }
+}
+
 // ---------------- Breadcrumb ----------------
 function renderBreadcrumb(absPath) {
   const el = document.getElementById('breadcrumb');
@@ -931,6 +954,8 @@ function commandList() {
     { label: 'Copy', run: copySelection },
     { label: 'Cut', run: cutSelection },
     { label: 'Paste', run: pasteClipboard },
+    { label: 'Start Local Server (serves current project)', run: startLocalServer },
+    { label: 'Stop Local Server', run: stopLocalServer },
     { label: 'Find', run: () => runEditorCommand('actions.find') },
     { label: 'Find & Replace', run: () => runEditorCommand('editor.action.startFindReplaceAction') },
     { label: 'Toggle Line Comment', run: () => runEditorCommand('editor.action.commentLine') },

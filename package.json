@@ -1,7 +1,7 @@
 {
-  "name": "codeeditor-app",
+  "name": "coodev",
   "version": "1.0.0",
-  "description": "Native Android wrapper for the Termux code editor",
+  "description": "COODEV — a standalone Android code editor built on Monaco",
   "scripts": {
     "sync": "cap sync android"
   },

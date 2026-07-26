@@ -37,6 +37,12 @@ jobs:
           echo "---- MainActivity ----"; cat android/app/src/main/java/com/termux/codeeditor/MainActivity.java
           echo "---- Manifest ----"; cat android/app/src/main/AndroidManifest.xml
 
+      - name: Add NanoHTTPD dependency (for the local server plugin)
+        run: |
+          sed -i "/dependencies {/a\\    implementation 'org.nanohttpd:nanohttpd:2.3.1'" android/app/build.gradle
+          echo "---- app/build.gradle dependencies ----"
+          grep -n -A 15 "dependencies {" android/app/build.gradle | head -20
+
       - name: Apply custom app icon
         run: cp -rf icons/mipmap-* android/app/src/main/res/
 
@@ -49,5 +55,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: code-editor-debug-apk
+          name: coodev-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
