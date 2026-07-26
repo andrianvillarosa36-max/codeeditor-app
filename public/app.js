@@ -102,14 +102,61 @@ function maybeAutoCloseTag(e) {
   }
 }
 
+// Common tags recognized for "tag.class#id" style abbreviations. A bare word
+// that isn't in this list won't hijack Tab — e.g. typing a normal word and
+// pressing Tab still just indents, it doesn't try to guess you meant a tag.
+const EMMET_TAGS = new Set([
+  'div', 'span', 'p', 'a', 'ul', 'ol', 'li', 'nav', 'header', 'footer', 'section', 'article', 'main', 'aside',
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'button', 'form', 'input', 'label', 'img', 'table', 'tr', 'td', 'th',
+  'thead', 'tbody', 'tfoot', 'select', 'option', 'textarea', 'strong', 'em', 'br', 'hr', 'i', 'b', 'small',
+  'figure', 'figcaption', 'video', 'audio', 'iframe', 'svg', 'canvas', 'pre', 'code', 'blockquote', 'dl', 'dt', 'dd',
+]);
+
+// Parses a single-element abbreviation: an optional tag name followed by any
+// number of .class or #id parts, e.g. "nav.navbar", "div#hero.card.featured",
+// ".wrapper" (defaults to div), "img.icon". Returns null if it doesn't look
+// like a recognized abbreviation, so Tab falls back to normal indenting.
+function parseEmmetToken(token) {
+  const m = token.match(/^([a-zA-Z][a-zA-Z0-9]*)?((?:[.#][\w-]+)+)?$/);
+  if (!m) return null;
+  const rawTag = m[1];
+  const rest = m[2];
+  if (!rawTag && !rest) return null;
+  const tag = (rawTag || 'div').toLowerCase();
+  if (!EMMET_TAGS.has(tag)) return null;
+  const classes = [];
+  let id = '';
+  if (rest) {
+    const partRe = /([.#])([\w-]+)/g;
+    let pm;
+    while ((pm = partRe.exec(rest)) !== null) {
+      if (pm[1] === '.') classes.push(pm[2]);
+      else id = pm[2];
+    }
+  }
+  return { tag, id, classes };
+}
+
 // "!" on its own line, then Tab -> full HTML5 boilerplate, cursor inside <body>.
+// Otherwise "tag.class#id" style abbreviations expand to that single element,
+// cursor placed between the open/close tags (or right after attrs for void
+// elements like img/input/br, since those never get a closing tag).
 function tryEmmetExpand() {
   const model = editor.getModel();
   if (!model || model.getLanguageId() !== 'html') return false;
   const pos = editor.getPosition();
   const lineContent = model.getLineContent(pos.lineNumber);
-  if (lineContent.trim() !== '!') return false;
+  const trimmed = lineContent.trim();
+  if (trimmed === '') return false;
 
+  if (trimmed === '!') return expandBoilerplate(pos, lineContent);
+
+  const parsed = parseEmmetToken(trimmed);
+  if (!parsed) return false;
+  return expandSingleTag(pos, lineContent, parsed);
+}
+
+function expandBoilerplate(pos, lineContent) {
   const range = new monaco.Range(pos.lineNumber, 1, pos.lineNumber, lineContent.length + 1);
   const snippetLines = [
     '<!DOCTYPE html>',
@@ -126,6 +173,30 @@ function tryEmmetExpand() {
   ];
   editor.executeEdits('emmet-boilerplate', [{ range, text: snippetLines.join('\n'), forceMoveMarkers: true }]);
   editor.setPosition({ lineNumber: pos.lineNumber + 8, column: 5 });
+  editor.focus();
+  return true;
+}
+
+function expandSingleTag(pos, lineContent, parsed) {
+  const range = new monaco.Range(pos.lineNumber, 1, pos.lineNumber, lineContent.length + 1);
+  const indent = (lineContent.match(/^\s*/) || [''])[0];
+
+  const attrParts = [];
+  if (parsed.id) attrParts.push(`id="${parsed.id}"`);
+  if (parsed.classes.length) attrParts.push(`class="${parsed.classes.join(' ')}"`);
+  const attrs = attrParts.length ? ' ' + attrParts.join(' ') : '';
+
+  if (VOID_ELEMENTS.has(parsed.tag)) {
+    const openPart = `<${parsed.tag}${attrs}`;
+    const text = indent + openPart + ' />';
+    editor.executeEdits('emmet-tag', [{ range, text, forceMoveMarkers: true }]);
+    editor.setPosition({ lineNumber: pos.lineNumber, column: indent.length + openPart.length + 1 });
+  } else {
+    const open = `<${parsed.tag}${attrs}>`;
+    const close = `</${parsed.tag}>`;
+    editor.executeEdits('emmet-tag', [{ range, text: indent + open + close, forceMoveMarkers: true }]);
+    editor.setPosition({ lineNumber: pos.lineNumber, column: indent.length + open.length + 1 });
+  }
   editor.focus();
   return true;
 }
@@ -703,6 +774,12 @@ document.getElementById('btn-preview').addEventListener('click', togglePreview);
 document.getElementById('close-preview').addEventListener('click', () => {
   document.getElementById('preview-panel').classList.add('hidden');
 });
+let previewMobileMode = false;
+document.getElementById('preview-device-toggle').addEventListener('click', () => {
+  previewMobileMode = !previewMobileMode;
+  document.getElementById('preview-frame').classList.toggle('mobile-frame', previewMobileMode);
+  document.getElementById('preview-device-toggle').textContent = previewMobileMode ? '🖥️ Desktop' : '📱 Mobile';
+});
 
 document.getElementById('save-btn').addEventListener('click', saveActive);
 document.getElementById('save-all-btn').addEventListener('click', saveAll);
@@ -769,11 +846,25 @@ function insertImageTag(imgAbsPath) {
   }
   const baseDir = activeTab.substring(0, activeTab.lastIndexOf('/'));
   const rel = relativePath(baseDir, imgAbsPath);
+  const lang = langFromExt(activeTab);
+
+  let snippet;
+  let toastMsg;
+  if (lang === 'css' || lang === 'scss') {
+    snippet = `url('${rel}')`;
+    toastMsg = 'Inserted url(...)';
+  } else if (lang === 'html') {
+    snippet = `<img src="${rel}" alt="">`;
+    toastMsg = 'Image tag inserted';
+  } else {
+    snippet = rel; // JS or anything else — just the path, safest generic default
+    toastMsg = 'Path inserted';
+  }
+
   const sel = editor.getSelection();
-  const tag = `<img src="${rel}" alt="">`;
-  editor.executeEdits('insertImage', [{ range: sel, text: tag, forceMoveMarkers: true }]);
+  editor.executeEdits('insertImage', [{ range: sel, text: snippet, forceMoveMarkers: true }]);
   editor.focus();
-  showToast('Image tag inserted');
+  showToast(toastMsg);
 }
 
 function renderQuickOpenList(query) {

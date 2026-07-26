@@ -195,11 +195,20 @@ body {
   background: #323233; color: #fff; padding: 8px 10px; font-size: 12px;
   display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
 }
+#preview-topbar-actions { display: flex; gap: 8px; }
+#preview-device-toggle {
+  background: #4a4a4a; color: #fff; border: none; border-radius: 3px;
+  padding: 6px 10px; font-size: 11px; cursor: pointer;
+}
 #close-preview {
   background: var(--accent); color: #fff; border: none; border-radius: 3px;
   padding: 6px 10px; font-size: 11px; cursor: pointer;
 }
 #preview-frame { flex: 1; border: none; width: 100%; background: #fff; }
+#preview-frame.mobile-frame {
+  width: 375px; max-width: 92%; margin: 0 auto;
+  border-left: 1px solid #3c3c3c; border-right: 1px solid #3c3c3c;
+}
 
 #empty-state {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
