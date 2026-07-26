@@ -951,6 +951,11 @@ function commandList() {
     { label: 'Go to File… (Quick Open)', run: () => openQuickOpen('open') },
     { label: 'Insert Image…', run: () => openQuickOpen('insert-image') },
     { label: 'Go to Full Storage (Home)', run: () => switchRoot(HOME) },
+    { label: 'Git…', run: openGitPanel },
+    { label: 'Git: Commit All', run: gitCommitAll },
+    { label: 'Git: Push', run: gitPush },
+    { label: 'Git: Pull', run: gitPull },
+    { label: 'Git Settings', run: gitSettings },
     { label: 'Copy', run: copySelection },
     { label: 'Cut', run: cutSelection },
     { label: 'Paste', run: pasteClipboard },
@@ -1007,13 +1012,252 @@ document.getElementById('command-palette').addEventListener('click', (e) => {
 });
 document.getElementById('command-palette-btn').addEventListener('click', openCommandPalette);
 
+// ---------------- Git integration ----------------
+// A Capacitor-Filesystem-backed adapter matching the interface
+// isomorphic-git expects (see isomorphic-git.org/docs/en/fs and the
+// reference custom-fs examples in the wild). Every method operates on
+// the same real files the editor itself reads and writes — there is
+// no separate in-browser storage layer, unlike isomorphic-git's usual
+// LightningFS/IndexedDB setup.
+const CORS_PROXY = 'https://cors.isomorphic-git.org';
+
+function GitLib() { return window.git; }
+function GitHttpLib() { return window.GitHttp; }
+async function ensureGitLoaded() {
+  if (!window.git || !window.GitHttp) throw new Error('Git library still loading — wait a moment and try again.');
+}
+
+function b64ToUint8(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+function uint8ToB64(bytes) {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  return btoa(bin);
+}
+function gitError(code, path) {
+  const e = new Error(`${code}: ${path}`);
+  e.code = code;
+  return e;
+}
+function makeGitStats(capStat) {
+  const isDir = capStat.type === 'directory';
+  return {
+    isFile: () => !isDir, isDirectory: () => isDir, isSymbolicLink: () => false,
+    size: capStat.size || 0, mtimeMs: capStat.mtime || Date.now(), ctimeMs: capStat.ctime || capStat.mtime || Date.now(),
+    mode: isDir ? 0o040000 : 0o100644, ino: 0, uid: 1, gid: 1, dev: 1,
+  };
+}
+
+const gitFs = {
+  promises: {
+    async readFile(filepath, opts) {
+      try {
+        const wantsUtf8 = opts && opts.encoding === 'utf8';
+        const res = await FS().readFile(wantsUtf8 ? { path: filepath, encoding: 'utf8' } : { path: filepath });
+        return wantsUtf8 ? res.data : b64ToUint8(res.data);
+      } catch (e) { throw gitError('ENOENT', filepath); }
+    },
+    async writeFile(filepath, data) {
+      const isBinary = data instanceof Uint8Array;
+      await FS().writeFile({
+        path: filepath,
+        data: isBinary ? uint8ToB64(data) : data,
+        encoding: isBinary ? undefined : 'utf8',
+        recursive: true,
+      });
+    },
+    async unlink(filepath) {
+      try { await FS().deleteFile({ path: filepath }); } catch (e) { throw gitError('ENOENT', filepath); }
+    },
+    async readdir(filepath) {
+      try { const res = await FS().readdir({ path: filepath }); return res.files.map((f) => f.name); }
+      catch (e) { throw gitError('ENOENT', filepath); }
+    },
+    async mkdir(filepath) {
+      let exists = false;
+      try { await FS().stat({ path: filepath }); exists = true; } catch (e) { /* good, doesn't exist yet */ }
+      if (exists) throw gitError('EEXIST', filepath);
+      await FS().mkdir({ path: filepath, recursive: true });
+    },
+    async rmdir(filepath) {
+      try { await FS().rmdir({ path: filepath, recursive: false }); } catch (e) { throw gitError('ENOTEMPTY', filepath); }
+    },
+    async stat(filepath) {
+      try { return makeGitStats(await FS().stat({ path: filepath })); } catch (e) { throw gitError('ENOENT', filepath); }
+    },
+    async lstat(filepath) {
+      try { return makeGitStats(await FS().stat({ path: filepath })); } catch (e) { throw gitError('ENOENT', filepath); }
+    },
+  },
+};
+
+// ---------------- Git config (name/email/username/token) ----------------
+function getGitConfig() {
+  try { return JSON.parse(localStorage.getItem('coodev-git-config') || '{}'); } catch (e) { return {}; }
+}
+function setGitConfig(cfg) { localStorage.setItem('coodev-git-config', JSON.stringify(cfg)); }
+function gitAuth() {
+  const cfg = getGitConfig();
+  return { username: cfg.username || '', password: cfg.token || '' };
+}
+function gitSettings() {
+  const cfg = getGitConfig();
+  const name = prompt('Your name (for commit authorship):', cfg.name || '');
+  if (name === null) return;
+  const email = prompt('Your email (for commit authorship):', cfg.email || '');
+  if (email === null) return;
+  const username = prompt('GitHub username:', cfg.username || '');
+  if (username === null) return;
+  const token = prompt('GitHub Personal Access Token (needs "repo" scope) — leave blank to keep the saved one:', '');
+  if (token === null) return;
+  setGitConfig({ name, email, username, token: token || cfg.token || '' });
+  showToast('Git settings saved');
+}
+
+// ---------------- Git operations ----------------
+function showGitBusy(msg) { const el = document.getElementById('git-busy'); el.textContent = msg; el.classList.remove('hidden'); }
+function hideGitBusy() { document.getElementById('git-busy').classList.add('hidden'); }
+
+async function gitInit() {
+  try {
+    await ensureGitLoaded();
+    await GitLib().init({ fs: gitFs, dir: ROOT });
+    showToast('Initialized empty repo');
+    refreshGitPanel();
+  } catch (e) { alert('Init failed: ' + e.message); }
+}
+
+async function gitCloneInto() {
+  const url = prompt('GitHub repo URL to clone (https://github.com/user/repo.git):');
+  if (!url) return;
+  const name = url.replace(/\.git$/, '').split('/').pop();
+  const dest = joinPath(ROOT, name);
+  showGitBusy(`Cloning into ${name}…`);
+  try {
+    await ensureGitLoaded();
+    await GitLib().clone({
+      fs: gitFs, http: GitHttpLib(), dir: dest, url,
+      corsProxy: CORS_PROXY, singleBranch: true, depth: 1, onAuth: gitAuth,
+    });
+    switchRoot(dest);
+    showToast('Cloned ' + name);
+  } catch (e) { alert('Clone failed: ' + e.message); }
+  finally { hideGitBusy(); }
+}
+
+async function gitStatus() {
+  await ensureGitLoaded();
+  const matrix = await GitLib().statusMatrix({ fs: gitFs, dir: ROOT });
+  // rows are [filepath, headStatus, workdirStatus, stageStatus]; 1,1,1 means unchanged
+  return matrix.filter((row) => !(row[1] === 1 && row[2] === 1 && row[3] === 1));
+}
+
+async function refreshGitPanel() {
+  document.getElementById('git-panel-root').textContent = ROOT;
+  let isRepo = true;
+  try { await FS().stat({ path: joinPath(ROOT, '.git') }); } catch (e) { isRepo = false; }
+  document.getElementById('git-not-repo').classList.toggle('hidden', isRepo);
+  document.getElementById('git-is-repo').classList.toggle('hidden', !isRepo);
+  if (!isRepo) return;
+
+  const list = document.getElementById('git-status-list');
+  list.innerHTML = '<div class="modal-item modal-dim">Checking status…</div>';
+  try {
+    const rows = await gitStatus();
+    list.innerHTML = '';
+    if (rows.length === 0) {
+      list.innerHTML = '<div class="modal-item modal-dim">No changes — working tree clean</div>';
+    } else {
+      rows.forEach(([filepath, head, workdir]) => {
+        let label = '📝 modified';
+        if (head === 0) label = '✚ new';
+        else if (workdir === 0) label = '🗑️ deleted';
+        const row = document.createElement('div');
+        row.className = 'modal-item';
+        row.textContent = `${label}  ${filepath}`;
+        list.appendChild(row);
+      });
+    }
+  } catch (e) {
+    list.innerHTML = `<div class="modal-item modal-dim">Error: ${e.message}</div>`;
+  }
+}
+
+async function gitCommitAll() {
+  const message = document.getElementById('git-commit-message').value.trim();
+  if (!message) { alert('Enter a commit message first.'); return; }
+  const cfg = getGitConfig();
+  if (!cfg.name || !cfg.email) { alert('Set your name/email in Git Settings first.'); return; }
+  showGitBusy('Committing…');
+  try {
+    await ensureGitLoaded();
+    const rows = await gitStatus();
+    for (const [filepath, , workdirStatus] of rows) {
+      if (workdirStatus === 0) await GitLib().remove({ fs: gitFs, dir: ROOT, filepath });
+      else await GitLib().add({ fs: gitFs, dir: ROOT, filepath });
+    }
+    await GitLib().commit({ fs: gitFs, dir: ROOT, message, author: { name: cfg.name, email: cfg.email } });
+    document.getElementById('git-commit-message').value = '';
+    showToast('Committed');
+    refreshGitPanel();
+  } catch (e) { alert('Commit failed: ' + e.message); }
+  finally { hideGitBusy(); }
+}
+
+async function gitPush() {
+  showGitBusy('Pushing…');
+  try {
+    await ensureGitLoaded();
+    await GitLib().push({ fs: gitFs, http: GitHttpLib(), dir: ROOT, corsProxy: CORS_PROXY, onAuth: gitAuth });
+    showToast('Pushed');
+  } catch (e) { alert('Push failed: ' + e.message); }
+  finally { hideGitBusy(); }
+}
+
+async function gitPull() {
+  const cfg = getGitConfig();
+  showGitBusy('Pulling…');
+  try {
+    await ensureGitLoaded();
+    await GitLib().pull({
+      fs: gitFs, http: GitHttpLib(), dir: ROOT, corsProxy: CORS_PROXY, onAuth: gitAuth, singleBranch: true,
+      author: { name: cfg.name || 'COODEV', email: cfg.email || 'coodev@example.com' },
+    });
+    showToast('Pulled latest changes');
+    renderTree(ROOT, document.getElementById('file-tree'));
+    refreshGitPanel();
+  } catch (e) { alert('Pull failed: ' + e.message); }
+  finally { hideGitBusy(); }
+}
+
+function openGitPanel() {
+  document.getElementById('git-panel').classList.remove('hidden');
+  refreshGitPanel();
+}
+function closeGitPanel() { document.getElementById('git-panel').classList.add('hidden'); }
+
+document.getElementById('git-btn').addEventListener('click', openGitPanel);
+document.getElementById('git-init-btn').addEventListener('click', gitInit);
+document.getElementById('git-clone-btn').addEventListener('click', gitCloneInto);
+document.getElementById('git-commit-btn').addEventListener('click', gitCommitAll);
+document.getElementById('git-push-btn').addEventListener('click', gitPush);
+document.getElementById('git-pull-btn').addEventListener('click', gitPull);
+document.getElementById('git-settings-btn').addEventListener('click', gitSettings);
+document.getElementById('git-close-btn').addEventListener('click', closeGitPanel);
+document.getElementById('git-panel').addEventListener('click', (e) => { if (e.target.id === 'git-panel') closeGitPanel(); });
+
 // ---------------- Global shortcuts ----------------
 window.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openCommandPalette(); return; }
   if (mod && !e.shiftKey && (e.key === 'p' || e.key === 'P')) { e.preventDefault(); openQuickOpen('open'); return; }
   if (mod && e.key === 's') { e.preventDefault(); saveActive(); return; }
-  if (e.key === 'Escape') { closeQuickOpen(); closeCommandPalette(); closeActionSheet(); }
+  if (e.key === 'Escape') { closeQuickOpen(); closeCommandPalette(); closeActionSheet(); closeGitPanel(); }
 });
 
 window.addEventListener('beforeunload', (e) => {

@@ -20,6 +20,7 @@
       <button id="wrap-toggle" title="Toggle word wrap">Wrap: Off</button>
       <button id="quick-open-btn" title="Jump to a file by name">Go to File</button>
       <button id="command-palette-btn" title="Run any editor command by tap">Commands</button>
+      <button id="git-btn" title="Git status, commit, push, pull">Git</button>
     </div>
   </div>
   <div id="extra-keys">
@@ -102,9 +103,42 @@
     </div>
   </div>
 
+  <div id="git-panel" class="hidden modal-overlay">
+    <div class="modal-box git-box">
+      <div class="modal-title">Git — <span id="git-panel-root"></span></div>
+
+      <div id="git-not-repo" class="hidden git-section">
+        <p class="git-hint">This folder isn't a git repository yet.</p>
+        <div class="git-actions">
+          <button id="git-init-btn">Init Repository Here</button>
+          <button id="git-clone-btn">Clone a Repository…</button>
+        </div>
+      </div>
+
+      <div id="git-is-repo" class="hidden git-section">
+        <div id="git-status-list" class="modal-list git-status-list"></div>
+        <textarea id="git-commit-message" placeholder="Commit message…"></textarea>
+        <div class="git-actions">
+          <button id="git-commit-btn">Commit All</button>
+          <button id="git-push-btn">Push</button>
+          <button id="git-pull-btn">Pull</button>
+        </div>
+      </div>
+
+      <div id="git-busy" class="hidden git-hint"></div>
+
+      <div class="git-actions git-footer">
+        <button id="git-settings-btn">Git Settings</button>
+        <button id="git-close-btn" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast-msg"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/isomorphic-git/dist/bundle.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/isomorphic-git/http/web/index.umd.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

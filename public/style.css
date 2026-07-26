@@ -172,6 +172,23 @@ body {
 }
 #toast-msg.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+.git-box { display: flex; flex-direction: column; max-height: 80vh; }
+.git-section { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.git-hint { padding: 12px; font-size: 12px; color: var(--text-dim); }
+.git-status-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; }
+#git-commit-message {
+  width: 100%; box-sizing: border-box; min-height: 60px; resize: vertical;
+  background: #1e1e1e; color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 8px; font-size: 12px; font-family: inherit;
+}
+.git-actions { display: flex; gap: 8px; flex-wrap: wrap; padding: 0 12px 12px 12px; }
+.git-actions button {
+  flex: 1; min-width: 90px; font-family: inherit; font-size: 12px; padding: 9px;
+  background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer;
+}
+.git-actions button.secondary { background: #3c3c3c; }
+.git-footer { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 4px; }
+
 #breadcrumb {
   padding: 5px 10px; font-size: 10px; color: var(--text-dim);
   background: #252526; border-bottom: 1px solid var(--border);
