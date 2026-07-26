@@ -956,6 +956,7 @@ function commandList() {
     { label: 'Git: Push', run: gitPush },
     { label: 'Git: Pull', run: gitPull },
     { label: 'Git Settings', run: gitSettings },
+    { label: 'Run Current File (JavaScript)', run: runCurrentFile },
     { label: 'Copy', run: copySelection },
     { label: 'Cut', run: cutSelection },
     { label: 'Paste', run: pasteClipboard },
@@ -1250,6 +1251,66 @@ document.getElementById('git-pull-btn').addEventListener('click', gitPull);
 document.getElementById('git-settings-btn').addEventListener('click', gitSettings);
 document.getElementById('git-close-btn').addEventListener('click', closeGitPanel);
 document.getElementById('git-panel').addEventListener('click', (e) => { if (e.target.id === 'git-panel') closeGitPanel(); });
+
+// ---------------- Run / Output (JavaScript only for now) ----------------
+// Executes the current file's JS inside a hidden sandboxed iframe and
+// captures console.log/warn/error plus uncaught errors via postMessage.
+// Python and other languages would need a much bigger separate feature
+// (a real in-browser interpreter like Pyodide) — this covers JS only.
+function runCurrentFile() {
+  if (!activeTab || openTabs[activeTab].type !== 'text') { alert('Open a file first.'); return; }
+  const lang = langFromExt(activeTab);
+  if (lang !== 'javascript') {
+    alert('Run currently supports JavaScript files only. Other languages (like Python) need a much bigger separate feature — a real in-browser interpreter — ask if you want that built next.');
+    return;
+  }
+  const code = openTabs[activeTab].model.getValue();
+  const wrapped = `<script>
+(function () {
+  var logs = [];
+  function send(type, args) {
+    logs.push({ type: type, text: Array.prototype.map.call(args, function (a) {
+      try { return (typeof a === 'object' && a !== null) ? JSON.stringify(a) : String(a); }
+      catch (e) { return String(a); }
+    }).join(' ') });
+    parent.postMessage({ __coodevRun: true, logs: logs }, '*');
+  }
+  console.log = function () { send('log', arguments); };
+  console.error = function () { send('error', arguments); };
+  console.warn = function () { send('warn', arguments); };
+  window.onerror = function (msg, src, line) { send('error', ['Uncaught: ' + msg + ' (line ' + line + ')']); return true; };
+})();
+<\/script><script>
+try {
+${code}
+} catch (e) { console.error('Uncaught: ' + e.message); }
+<\/script>`;
+  document.getElementById('output-list').innerHTML = '<div class="output-item output-log">Running…</div>';
+  document.getElementById('output-panel').classList.remove('hidden');
+  document.getElementById('run-frame').srcdoc = wrapped;
+}
+
+function renderOutput(logs) {
+  const list = document.getElementById('output-list');
+  list.innerHTML = '';
+  if (!logs || logs.length === 0) { list.innerHTML = '<div class="output-item">(no output)</div>'; return; }
+  logs.forEach((l) => {
+    const row = document.createElement('div');
+    row.className = 'output-item output-' + l.type;
+    row.textContent = l.text;
+    list.appendChild(row);
+  });
+  list.scrollTop = list.scrollHeight;
+}
+
+window.addEventListener('message', (e) => {
+  if (e.data && e.data.__coodevRun) renderOutput(e.data.logs);
+});
+
+document.getElementById('run-btn').addEventListener('click', runCurrentFile);
+document.getElementById('output-close').addEventListener('click', () => {
+  document.getElementById('output-panel').classList.add('hidden');
+});
 
 // ---------------- Global shortcuts ----------------
 window.addEventListener('keydown', (e) => {

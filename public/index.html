@@ -21,6 +21,7 @@
       <button id="quick-open-btn" title="Jump to a file by name">Go to File</button>
       <button id="command-palette-btn" title="Run any editor command by tap">Commands</button>
       <button id="git-btn" title="Git status, commit, push, pull">Git</button>
+      <button id="run-btn" title="Run the current .js file and see its output">▶ Run</button>
     </div>
   </div>
   <div id="extra-keys">
@@ -134,10 +135,19 @@
     </div>
   </div>
 
+  <div id="output-panel" class="hidden">
+    <div id="output-header">
+      <span class="output-tab active">OUTPUT</span>
+      <button id="output-close">✕</button>
+    </div>
+    <div id="output-list"></div>
+  </div>
+  <iframe id="run-frame" class="hidden" sandbox="allow-scripts"></iframe>
+
   <div id="toast-msg"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/isomorphic-git/dist/bundle.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/isomorphic-git"></script>
   <script src="https://cdn.jsdelivr.net/npm/isomorphic-git/http/web/index.umd.js"></script>
   <script src="app.js"></script>
 </body>

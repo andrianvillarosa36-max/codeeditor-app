@@ -44,7 +44,10 @@ jobs:
           grep -n -A 15 "dependencies {" android/app/build.gradle | head -20
 
       - name: Apply custom app icon
-        run: cp -rf icons/mipmap-* android/app/src/main/res/
+        run: |
+          cp -rf icons/mipmap-* android/app/src/main/res/
+          mkdir -p android/app/src/main/res/values
+          cp -f icons/values/ic_launcher_background.xml android/app/src/main/res/values/ic_launcher_background.xml
 
       - name: Build debug APK
         run: |
