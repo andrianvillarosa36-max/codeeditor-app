@@ -1022,17 +1022,30 @@ document.getElementById('command-palette-btn').addEventListener('click', openCom
 // LightningFS/IndexedDB setup.
 const CORS_PROXY = 'https://cors.isomorphic-git.org';
 
-function GitLib() { return window.git; }
-function GitHttpLib() { return window.GitHttp; }
+let _gitLib = null;
+let _httpLib = null;
+function detectGitGlobals() {
+  const candidates = window.__gitNewGlobals || [];
+  candidates.forEach((key) => {
+    const val = window[key];
+    if (!val || typeof val !== 'object') return;
+    if (!_gitLib && typeof val.clone === 'function' && typeof val.statusMatrix === 'function') _gitLib = val;
+    if (!_httpLib && typeof val.request === 'function') _httpLib = val;
+  });
+  // Fallback in case the diff missed something (e.g. a name collision).
+  if (!_gitLib && window.git && typeof window.git.clone === 'function') _gitLib = window.git;
+  if (!_httpLib && window.GitHttp && typeof window.GitHttp.request === 'function') _httpLib = window.GitHttp;
+}
+function GitLib() { if (!_gitLib) detectGitGlobals(); return _gitLib; }
+function GitHttpLib() { if (!_httpLib) detectGitGlobals(); return _httpLib; }
 async function ensureGitLoaded() {
-  if (window.git && window.GitHttp) return;
-  // These load from a local bundled file now, not a runtime CDN, so this
-  // should be near-instant — a short grace period is just a safety margin.
-  for (let i = 0; i < 5; i++) {
+  if (GitLib() && GitHttpLib()) return;
+  for (let i = 0; i < 10; i++) {
     await new Promise((r) => setTimeout(r, 200));
-    if (window.git && window.GitHttp) return;
+    if (GitLib() && GitHttpLib()) return;
   }
-  throw new Error('Git library failed to initialize. This would mean the bundled file didn\'t build correctly — screenshot this and we\'ll check the build log.');
+  const found = (window.__gitNewGlobals || []).join(', ') || '(none detected)';
+  throw new Error('Could not identify the git library among its exports. New globals found after loading: ' + found + '. Screenshot this exact message.');
 }
 
 function b64ToUint8(b64) {
@@ -1246,10 +1259,11 @@ async function gitPull() {
 
 function updateGitLibStatus() {
   const el = document.getElementById('git-lib-status');
-  if (window.git && window.GitHttp) {
+  if (GitLib() && GitHttpLib()) {
     el.textContent = '✅ Git library loaded';
   } else {
-    el.textContent = '⚠️ Git library failed to initialize (bundled file issue — screenshot this)';
+    const found = (window.__gitNewGlobals || []).join(', ') || 'none';
+    el.textContent = `⚠️ Could not identify git library exports. New globals: ${found}`;
   }
 }
 

@@ -148,12 +148,18 @@
   <div id="toast-msg"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+  <script>window.__preGitKeys = Object.keys(window);</script>
   <script src="vendor/isomorphic-git.js"></script>
   <script src="vendor/isomorphic-git-http-web.js"></script>
   <script>
-    // These now ship inside the APK itself (downloaded once at build time),
-    // so there's no runtime CDN dependency for loading the library anymore.
-    window.__gitLibStatus = (window.git && window.GitHttp) ? 'loaded' : 'failed';
+    // Rather than assume the UMD bundles expose fixed global names (which
+    // just turned out to have changed across a major version bump), record
+    // every new global these two scripts actually created. app.js then
+    // identifies which one is which by shape (has .clone/.statusMatrix ->
+    // the git library; has .request -> the http client) instead of by name.
+    window.__gitNewGlobals = Object.keys(window).filter(function (k) {
+      return window.__preGitKeys.indexOf(k) === -1;
+    });
   </script>
   <script src="app.js"></script>
 </body>
