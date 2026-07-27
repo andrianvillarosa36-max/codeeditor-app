@@ -1026,12 +1026,13 @@ function GitLib() { return window.git; }
 function GitHttpLib() { return window.GitHttp; }
 async function ensureGitLoaded() {
   if (window.git && window.GitHttp) return;
-  for (let i = 0; i < 15; i++) {
-    await new Promise((r) => setTimeout(r, 300));
+  // These load from a local bundled file now, not a runtime CDN, so this
+  // should be near-instant — a short grace period is just a safety margin.
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 200));
     if (window.git && window.GitHttp) return;
-    if (window.__gitLibStatus === 'failed') break;
   }
-  throw new Error('Git library failed to load from both jsDelivr and unpkg — check your internet connection, then reopen the Git panel to retry.');
+  throw new Error('Git library failed to initialize. This would mean the bundled file didn\'t build correctly — screenshot this and we\'ll check the build log.');
 }
 
 function b64ToUint8(b64) {
@@ -1247,11 +1248,8 @@ function updateGitLibStatus() {
   const el = document.getElementById('git-lib-status');
   if (window.git && window.GitHttp) {
     el.textContent = '✅ Git library loaded';
-  } else if (window.__gitLibStatus === 'failed') {
-    el.textContent = '⚠️ Failed to load (tried jsDelivr and unpkg) — check your connection and reopen this panel';
   } else {
-    el.textContent = '⏳ Loading git library…';
-    setTimeout(() => { if (document.getElementById('git-panel') && !document.getElementById('git-panel').classList.contains('hidden')) updateGitLibStatus(); }, 500);
+    el.textContent = '⚠️ Git library failed to initialize (bundled file issue — screenshot this)';
   }
 }
 

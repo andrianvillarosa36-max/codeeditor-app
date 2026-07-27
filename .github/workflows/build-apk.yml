@@ -23,6 +23,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Bundle git libraries locally (avoids runtime CDN dependency)
+        run: |
+          mkdir -p public/vendor
+          curl -fsSL https://cdn.jsdelivr.net/npm/isomorphic-git -o public/vendor/isomorphic-git.js
+          curl -fsSL https://cdn.jsdelivr.net/npm/isomorphic-git/http/web/index.umd.js -o public/vendor/isomorphic-git-http-web.js
+          echo "---- downloaded files ----"
+          ls -la public/vendor/
+          echo "---- first line of each (sanity check it's real JS, not an error page) ----"
+          head -c 200 public/vendor/isomorphic-git.js; echo
+          head -c 200 public/vendor/isomorphic-git-http-web.js; echo
+
       - name: Add Android platform
         run: npx cap add android
 

@@ -148,38 +148,12 @@
   <div id="toast-msg"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+  <script src="vendor/isomorphic-git.js"></script>
+  <script src="vendor/isomorphic-git-http-web.js"></script>
   <script>
-    // Loads the git libraries with a fallback CDN, and tracks status so the
-    // app can show a clear "loaded / still loading / failed" state instead
-    // of only finding out when an action is attempted.
-    window.__gitLibStatus = 'loading';
-    (function loadGitLibs() {
-      function loadScript(srcs, onDone) {
-        var i = 0;
-        function tryNext() {
-          if (i >= srcs.length) { onDone(false); return; }
-          var s = document.createElement('script');
-          s.src = srcs[i];
-          s.onload = function () { onDone(true); };
-          s.onerror = function () { i++; tryNext(); };
-          document.head.appendChild(s);
-        }
-        tryNext();
-      }
-      var mainOk = null, httpOk = null;
-      function checkDone() {
-        if (mainOk === null || httpOk === null) return;
-        window.__gitLibStatus = (mainOk && httpOk) ? 'loaded' : 'failed';
-      }
-      loadScript(
-        ['https://cdn.jsdelivr.net/npm/isomorphic-git', 'https://unpkg.com/isomorphic-git'],
-        function (ok) { mainOk = ok; checkDone(); }
-      );
-      loadScript(
-        ['https://cdn.jsdelivr.net/npm/isomorphic-git/http/web/index.umd.js', 'https://unpkg.com/isomorphic-git/http/web/index.umd.js'],
-        function (ok) { httpOk = ok; checkDone(); }
-      );
-    })();
+    // These now ship inside the APK itself (downloaded once at build time),
+    // so there's no runtime CDN dependency for loading the library anymore.
+    window.__gitLibStatus = (window.git && window.GitHttp) ? 'loaded' : 'failed';
   </script>
   <script src="app.js"></script>
 </body>
