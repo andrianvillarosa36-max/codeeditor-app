@@ -147,7 +147,6 @@
 
   <div id="toast-msg"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
   <script>window.__preGitKeys = Object.keys(window);</script>
   <script src="vendor/isomorphic-git.js"></script>
   <script src="vendor/isomorphic-git-http-web.js"></script>
@@ -157,10 +156,17 @@
     // every new global these two scripts actually created. app.js then
     // identifies which one is which by shape (has .clone/.statusMatrix ->
     // the git library; has .request -> the http client) instead of by name.
+    //
+    // Loaded BEFORE Monaco's AMD loader below on purpose: a UMD bundle
+    // checks for an AMD environment (a global `define` with `.amd`) and
+    // registers itself as an AMD module instead of a plain global if it
+    // finds one. Monaco's loader sets exactly that up, so isomorphic-git
+    // has to run first, while no AMD loader exists yet.
     window.__gitNewGlobals = Object.keys(window).filter(function (k) {
-      return window.__preGitKeys.indexOf(k) === -1;
+      return window.__preGitKeys.indexOf(k) === -1 && k !== '__preGitKeys';
     });
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
