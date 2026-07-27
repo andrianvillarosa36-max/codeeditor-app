@@ -1025,7 +1025,13 @@ const CORS_PROXY = 'https://cors.isomorphic-git.org';
 function GitLib() { return window.git; }
 function GitHttpLib() { return window.GitHttp; }
 async function ensureGitLoaded() {
-  if (!window.git || !window.GitHttp) throw new Error('Git library still loading — wait a moment and try again.');
+  if (window.git && window.GitHttp) return;
+  for (let i = 0; i < 15; i++) {
+    await new Promise((r) => setTimeout(r, 300));
+    if (window.git && window.GitHttp) return;
+    if (window.__gitLibStatus === 'failed') break;
+  }
+  throw new Error('Git library failed to load from both jsDelivr and unpkg — check your internet connection, then reopen the Git panel to retry.');
 }
 
 function b64ToUint8(b64) {
@@ -1160,6 +1166,7 @@ async function gitStatus() {
 
 async function refreshGitPanel() {
   document.getElementById('git-panel-root').textContent = ROOT;
+  updateGitLibStatus();
   let isRepo = true;
   try { await FS().stat({ path: joinPath(ROOT, '.git') }); } catch (e) { isRepo = false; }
   document.getElementById('git-not-repo').classList.toggle('hidden', isRepo);
@@ -1234,6 +1241,18 @@ async function gitPull() {
     refreshGitPanel();
   } catch (e) { alert('Pull failed: ' + e.message); }
   finally { hideGitBusy(); }
+}
+
+function updateGitLibStatus() {
+  const el = document.getElementById('git-lib-status');
+  if (window.git && window.GitHttp) {
+    el.textContent = '✅ Git library loaded';
+  } else if (window.__gitLibStatus === 'failed') {
+    el.textContent = '⚠️ Failed to load (tried jsDelivr and unpkg) — check your connection and reopen this panel';
+  } else {
+    el.textContent = '⏳ Loading git library…';
+    setTimeout(() => { if (document.getElementById('git-panel') && !document.getElementById('git-panel').classList.contains('hidden')) updateGitLibStatus(); }, 500);
+  }
 }
 
 function openGitPanel() {
