@@ -1114,6 +1114,16 @@ const gitFs = {
     async lstat(filepath) {
       try { return makeGitStats(await FS().stat({ path: filepath })); } catch (e) { throw gitError('ENOENT', filepath); }
     },
+    // These three are documented as "optional" — only needed if a repo
+    // actually uses symlinks — but isomorphic-git's internal fs wrapper
+    // appears to grab a reference to all of them unconditionally, which
+    // throws "Cannot read properties of undefined (reading 'bind')" if
+    // they're missing entirely, even before any symlink is involved.
+    // Stubbing them out (rather than omitting them) fixes that, while
+    // still failing clearly if something ever genuinely needs a symlink.
+    async readlink(filepath) { throw gitError('ENOSYS', filepath); },
+    async symlink(target, filepath) { throw gitError('ENOSYS', filepath); },
+    async chmod(filepath, mode) { /* no-op: not meaningful on this filesystem */ },
   },
 };
 
