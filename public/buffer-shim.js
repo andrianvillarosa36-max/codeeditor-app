@@ -80,6 +80,8 @@
 
     static byteLength(str, encoding) { return Buffer.fromString(String(str), encoding).length; }
 
+    static compare(a, b) { return Buffer.from(a).compare(b); }
+
     toString(encoding, start, end) {
       encoding = (encoding || 'utf8').toLowerCase();
       const slice = (start !== undefined || end !== undefined)
@@ -100,6 +102,55 @@
     }
 
     slice(start, end) { return Buffer.from(this.subarray(start, end)); }
+
+    write(string, offset, length, encoding) {
+      // Node's write() is overloaded: write(string[, offset[, length]][, encoding])
+      if (typeof offset === 'string') { encoding = offset; offset = 0; length = this.length; }
+      else if (typeof length === 'string') { encoding = length; length = this.length - (offset || 0); }
+      else {
+        if (offset === undefined) offset = 0;
+        if (length === undefined) length = this.length - offset;
+      }
+      encoding = (encoding || 'utf8').toLowerCase();
+      const encoded = Buffer.fromString(string, encoding);
+      const toWrite = Math.min(length, encoded.length, this.length - offset);
+      for (let i = 0; i < toWrite; i++) this[offset + i] = encoded[i];
+      return toWrite;
+    }
+
+    copy(target, targetStart, sourceStart, sourceEnd) {
+      targetStart = targetStart || 0;
+      sourceStart = sourceStart || 0;
+      sourceEnd = sourceEnd === undefined ? this.length : sourceEnd;
+      let count = 0;
+      for (let i = sourceStart; i < sourceEnd; i++) { target[targetStart + count] = this[i]; count++; }
+      return count;
+    }
+
+    readUInt8(offset) { return this[offset]; }
+    readUInt16BE(offset) { return (this[offset] << 8) | this[offset + 1]; }
+    readUInt16LE(offset) { return (this[offset + 1] << 8) | this[offset]; }
+    readUInt32BE(offset) {
+      return ((this[offset] << 24) | (this[offset + 1] << 16) | (this[offset + 2] << 8) | this[offset + 3]) >>> 0;
+    }
+    readUInt32LE(offset) {
+      return ((this[offset + 3] << 24) | (this[offset + 2] << 16) | (this[offset + 1] << 8) | this[offset]) >>> 0;
+    }
+    writeUInt8(value, offset) { this[offset] = value & 0xff; return offset + 1; }
+    writeUInt16BE(value, offset) {
+      this[offset] = (value >>> 8) & 0xff; this[offset + 1] = value & 0xff; return offset + 2;
+    }
+    writeUInt16LE(value, offset) {
+      this[offset] = value & 0xff; this[offset + 1] = (value >>> 8) & 0xff; return offset + 2;
+    }
+    writeUInt32BE(value, offset) {
+      this[offset] = (value >>> 24) & 0xff; this[offset + 1] = (value >>> 16) & 0xff;
+      this[offset + 2] = (value >>> 8) & 0xff; this[offset + 3] = value & 0xff; return offset + 4;
+    }
+    writeUInt32LE(value, offset) {
+      this[offset] = value & 0xff; this[offset + 1] = (value >>> 8) & 0xff;
+      this[offset + 2] = (value >>> 16) & 0xff; this[offset + 3] = (value >>> 24) & 0xff; return offset + 4;
+    }
 
     equals(other) {
       if (this.length !== other.length) return false;
