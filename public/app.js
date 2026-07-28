@@ -955,6 +955,7 @@ function commandList() {
     { label: 'Git: Commit All', run: gitCommitAll },
     { label: 'Git: Push', run: gitPush },
     { label: 'Git: Pull', run: gitPull },
+    { label: 'Git: Set Remote…', run: gitSetRemote },
     { label: 'Git Settings', run: gitSettings },
     { label: 'Run Current File (JavaScript)', run: runCurrentFile },
     { label: 'Copy', run: copySelection },
@@ -1039,13 +1040,16 @@ function detectGitGlobals() {
 function GitLib() { if (!_gitLib) detectGitGlobals(); return _gitLib; }
 function GitHttpLib() { if (!_httpLib) detectGitGlobals(); return _httpLib; }
 async function ensureGitLoaded() {
-  if (GitLib() && GitHttpLib()) return;
-  for (let i = 0; i < 10; i++) {
+  if (GitLib() && GitHttpLib() && window.Buffer) return;
+  for (let i = 0; i < 15; i++) {
     await new Promise((r) => setTimeout(r, 200));
-    if (GitLib() && GitHttpLib()) return;
+    if (GitLib() && GitHttpLib() && window.Buffer) return;
   }
   const found = (window.__gitNewGlobals || []).join(', ') || '(none detected)';
-  throw new Error('Could not identify the git library among its exports. New globals found after loading: ' + found + '. Screenshot this exact message.');
+  const missing = [];
+  if (!GitLib() || !GitHttpLib()) missing.push(`git library exports (new globals seen: ${found})`);
+  if (!window.Buffer) missing.push('Buffer polyfill');
+  throw new Error('Still missing: ' + missing.join('; ') + '. Screenshot this exact message.');
 }
 
 function b64ToUint8(b64) {
@@ -1159,8 +1163,23 @@ async function gitInit() {
     await ensureGitLoaded();
     await GitLib().init({ fs: gitFs, dir: ROOT });
     showToast('Initialized empty repo');
+    const url = prompt('Optional: paste a GitHub repo URL to link as "origin" (needed for Push/Pull) — or leave blank to skip for now:');
+    if (url) {
+      await GitLib().addRemote({ fs: gitFs, dir: ROOT, remote: 'origin', url, force: true });
+      showToast('Remote "origin" set');
+    }
     refreshGitPanel();
   } catch (e) { alert('Init failed: ' + e.message); }
+}
+
+async function gitSetRemote() {
+  const url = prompt('GitHub repo URL to set as "origin" (needed for Push/Pull):');
+  if (!url) return;
+  try {
+    await ensureGitLoaded();
+    await GitLib().addRemote({ fs: gitFs, dir: ROOT, remote: 'origin', url, force: true });
+    showToast('Remote "origin" set');
+  } catch (e) { alert('Could not set remote: ' + e.message); }
 }
 
 async function gitCloneInto() {
@@ -1245,7 +1264,7 @@ async function gitPush() {
   showGitBusy('Pushing…');
   try {
     await ensureGitLoaded();
-    await GitLib().push({ fs: gitFs, http: GitHttpLib(), dir: ROOT, corsProxy: CORS_PROXY, onAuth: gitAuth });
+    await GitLib().push({ fs: gitFs, http: GitHttpLib(), dir: ROOT, remote: 'origin', corsProxy: CORS_PROXY, onAuth: gitAuth });
     showToast('Pushed');
   } catch (e) { alert('Push failed: ' + e.message); }
   finally { hideGitBusy(); }
@@ -1257,7 +1276,7 @@ async function gitPull() {
   try {
     await ensureGitLoaded();
     await GitLib().pull({
-      fs: gitFs, http: GitHttpLib(), dir: ROOT, corsProxy: CORS_PROXY, onAuth: gitAuth, singleBranch: true,
+      fs: gitFs, http: GitHttpLib(), dir: ROOT, remote: 'origin', corsProxy: CORS_PROXY, onAuth: gitAuth, singleBranch: true,
       author: { name: cfg.name || 'COODEV', email: cfg.email || 'coodev@example.com' },
     });
     showToast('Pulled latest changes');
@@ -1269,11 +1288,13 @@ async function gitPull() {
 
 function updateGitLibStatus() {
   const el = document.getElementById('git-lib-status');
-  if (GitLib() && GitHttpLib()) {
+  if (GitLib() && GitHttpLib() && window.Buffer) {
     el.textContent = '✅ Git library loaded';
   } else {
-    const found = (window.__gitNewGlobals || []).join(', ') || 'none';
-    el.textContent = `⚠️ Could not identify git library exports. New globals: ${found}`;
+    const parts = [];
+    if (!GitLib() || !GitHttpLib()) parts.push('git exports (' + ((window.__gitNewGlobals || []).join(', ') || 'none') + ')');
+    if (!window.Buffer) parts.push('Buffer polyfill');
+    el.textContent = `⚠️ Still missing: ${parts.join('; ')}`;
   }
 }
 
@@ -1289,6 +1310,7 @@ document.getElementById('git-clone-btn').addEventListener('click', gitCloneInto)
 document.getElementById('git-commit-btn').addEventListener('click', gitCommitAll);
 document.getElementById('git-push-btn').addEventListener('click', gitPush);
 document.getElementById('git-pull-btn').addEventListener('click', gitPull);
+document.getElementById('git-remote-btn').addEventListener('click', gitSetRemote);
 document.getElementById('git-settings-btn').addEventListener('click', gitSettings);
 document.getElementById('git-close-btn').addEventListener('click', closeGitPanel);
 document.getElementById('git-panel').addEventListener('click', (e) => { if (e.target.id === 'git-panel') closeGitPanel(); });

@@ -124,6 +124,7 @@
           <button id="git-commit-btn">Commit All</button>
           <button id="git-push-btn">Push</button>
           <button id="git-pull-btn">Pull</button>
+          <button id="git-remote-btn">Set Remote…</button>
         </div>
       </div>
 
@@ -146,6 +147,20 @@
   <iframe id="run-frame" class="hidden" sandbox="allow-scripts"></iframe>
 
   <div id="toast-msg"></div>
+
+  <script type="module">
+    // isomorphic-git's internals use Node's Buffer for hashing, which
+    // doesn't exist in a browser at all unless something provides it —
+    // normally a bundler's auto-polyfill does this invisibly, but we're
+    // not running one, so we load the standard browser Buffer polyfill
+    // ourselves and expose it the same way a bundler would: as a global.
+    import * as BufferModule from './vendor/buffer.esm.js';
+    window.Buffer = BufferModule.Buffer
+      || (BufferModule.default && BufferModule.default.Buffer)
+      || BufferModule.default
+      || BufferModule;
+    window.__bufferReady = true;
+  </script>
 
   <script>window.__preGitKeys = Object.keys(window);</script>
   <script src="vendor/isomorphic-git.js"></script>
