@@ -148,20 +148,7 @@
 
   <div id="toast-msg"></div>
 
-  <script type="module">
-    // isomorphic-git's internals use Node's Buffer for hashing, which
-    // doesn't exist in a browser at all unless something provides it —
-    // normally a bundler's auto-polyfill does this invisibly, but we're
-    // not running one, so we load the standard browser Buffer polyfill
-    // ourselves and expose it the same way a bundler would: as a global.
-    import * as BufferModule from './vendor/buffer.esm.js';
-    window.Buffer = BufferModule.Buffer
-      || (BufferModule.default && BufferModule.default.Buffer)
-      || BufferModule.default
-      || BufferModule;
-    window.__bufferReady = true;
-  </script>
-
+  <script src="buffer-shim.js"></script>
   <script>window.__preGitKeys = Object.keys(window);</script>
   <script src="vendor/isomorphic-git.js"></script>
   <script src="vendor/isomorphic-git-http-web.js"></script>
