@@ -957,7 +957,8 @@ function commandList() {
     { label: 'Git: Pull', run: gitPull },
     { label: 'Git: Set Remote…', run: gitSetRemote },
     { label: 'Git Settings', run: gitSettings },
-    { label: 'Run Current File (JavaScript)', run: runCurrentFile },
+    { label: 'Run Current File (JavaScript / Java)', run: runCurrentFile },
+    { label: 'Java Run Settings…', run: javaRunSettings },
     { label: 'Copy', run: copySelection },
     { label: 'Cut', run: cutSelection },
     { label: 'Paste', run: pasteClipboard },
@@ -1266,7 +1267,13 @@ async function gitPush() {
     await ensureGitLoaded();
     await GitLib().push({ fs: gitFs, http: GitHttpLib(), dir: ROOT, remote: 'origin', corsProxy: CORS_PROXY, onAuth: gitAuth });
     showToast('Pushed');
-  } catch (e) { alert('Push failed: ' + e.message); }
+  } catch (e) {
+    if (/fast-forward/i.test(e.message)) {
+      alert('Push rejected: GitHub has commits your phone doesn\'t have yet (often just the initial README). Tap Pull to merge those in, then Push again.');
+    } else {
+      alert('Push failed: ' + e.message);
+    }
+  }
   finally { hideGitBusy(); }
 }
 
@@ -1316,17 +1323,19 @@ document.getElementById('git-close-btn').addEventListener('click', closeGitPanel
 document.getElementById('git-panel').addEventListener('click', (e) => { if (e.target.id === 'git-panel') closeGitPanel(); });
 
 // ---------------- Run / Output (JavaScript only for now) ----------------
-// Executes the current file's JS inside a hidden sandboxed iframe and
-// captures console.log/warn/error plus uncaught errors via postMessage.
-// Python and other languages would need a much bigger separate feature
-// (a real in-browser interpreter like Pyodide) — this covers JS only.
+// Dispatches Run based on the current file's language: JavaScript runs
+// instantly on-device (a hidden sandboxed iframe); Java compiles and runs
+// via JDoodle's free online compiler API (needs internet + a one-time
+// free credential setup). Other languages aren't wired up yet.
 function runCurrentFile() {
   if (!activeTab || openTabs[activeTab].type !== 'text') { alert('Open a file first.'); return; }
   const lang = langFromExt(activeTab);
-  if (lang !== 'javascript') {
-    alert('Run currently supports JavaScript files only. Other languages (like Python) need a much bigger separate feature — a real in-browser interpreter — ask if you want that built next.');
-    return;
-  }
+  if (lang === 'javascript') { runJavaScriptLocal(); return; }
+  if (lang === 'java') { runJavaRemote(); return; }
+  alert('Run currently supports JavaScript (instant, on-device) and Java (via a free online compiler, needs internet). Other languages need their own dedicated support — ask if you want one added.');
+}
+
+function runJavaScriptLocal() {
   const code = openTabs[activeTab].model.getValue();
   const wrapped = `<script>
 (function () {
@@ -1351,6 +1360,70 @@ ${code}
   document.getElementById('output-list').innerHTML = '<div class="output-item output-log">Running…</div>';
   document.getElementById('output-panel').classList.remove('hidden');
   document.getElementById('run-frame').srcdoc = wrapped;
+}
+
+// ---------------- Java (via JDoodle's free online compiler) ----------------
+// Java is compiled, not interpreted — there's no mature way to compile
+// arbitrary .java source entirely on-device the way Pyodide runs Python
+// source directly. JDoodle provides a free (200 runs/day, no card needed)
+// REST API that compiles and executes real Java, at the cost of needing
+// internet and sending the code to their service.
+const JDOODLE_VERSION_INDEX = '6'; // JDK 25.0.2, the most current available
+
+function getJdoodleConfig() {
+  try { return JSON.parse(localStorage.getItem('coodev-jdoodle-config') || '{}'); } catch (e) { return {}; }
+}
+function setJdoodleConfig(cfg) { localStorage.setItem('coodev-jdoodle-config', JSON.stringify(cfg)); }
+
+function javaRunSettings() {
+  const cfg = getJdoodleConfig();
+  const clientId = prompt('JDoodle Client ID — free, sign up at jdoodle.com/compiler-api (200 free runs/day, no card needed):', cfg.clientId || '');
+  if (clientId === null) return;
+  const clientSecret = prompt('JDoodle Client Secret:', '');
+  setJdoodleConfig({ clientId, clientSecret: clientSecret || cfg.clientSecret || '' });
+  showToast('Java run settings saved');
+}
+
+async function runJavaRemote() {
+  const cfg = getJdoodleConfig();
+  if (!cfg.clientId || !cfg.clientSecret) {
+    alert('Set up free JDoodle credentials first — needed once, then Run just works from here on.');
+    javaRunSettings();
+    return;
+  }
+  const code = openTabs[activeTab].model.getValue();
+  document.getElementById('output-list').innerHTML = '<div class="output-item output-log">Compiling & running on JDoodle…</div>';
+  document.getElementById('output-panel').classList.remove('hidden');
+  try {
+    const res = await fetch('https://api.jdoodle.com/v1/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        clientId: cfg.clientId,
+        clientSecret: cfg.clientSecret,
+        script: code,
+        stdin: '',
+        language: 'java',
+        versionIndex: JDOODLE_VERSION_INDEX,
+      }),
+    });
+    if (!res.ok) {
+      if (res.status === 429) throw new Error('Daily free-run limit reached (200/day) — try again tomorrow.');
+      throw new Error('HTTP ' + res.status);
+    }
+    const data = await res.json();
+    const lines = [];
+    if (data.output) lines.push({ type: data.isExecutionSuccess === false ? 'error' : 'log', text: data.output });
+    if (data.error) lines.push({ type: 'error', text: data.error });
+    if (lines.length === 0) lines.push({ type: 'log', text: '(no output)' });
+    renderOutput(lines);
+  } catch (e) {
+    renderOutput([{
+      type: 'error',
+      text: 'Could not reach JDoodle: ' + e.message +
+        '\n\nIf this is a network/CORS-looking error, that\'s a known possible snag calling their API directly from an app — screenshot the exact error and we\'ll add a workaround.',
+    }]);
+  }
 }
 
 function renderOutput(logs) {
