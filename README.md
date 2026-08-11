@@ -57,7 +57,10 @@ storage (`/storage/emulated/0`) every time.
 - **Prettier-style formatting** — `Format` / `Format Document`, `Format Selection`,
   VS Code-style `Shift+Alt+F`, and optional **Format on Save**. JavaScript/JSX,
   TypeScript/TSX, JSON, HTML, CSS/SCSS, Markdown, and YAML use Prettier's
-  browser formatter; other languages fall back to Monaco when it has a formatter.
+  browser formatter. **GDScript (`.gd`) has a built-in Godot-aware formatter**,
+  including indentation, common operator/comma spacing, syntax highlighting,
+  and `# fmt: off` / `# fmt: on` protected regions. Other languages fall back
+  to Monaco when it has a formatter.
 - **Copy / Cut / Paste** through the real Android clipboard (Command
   Palette, or a physical keyboard's usual shortcuts).
 - **Go to File** (`Ctrl+P`) and **Commands** (`Ctrl+Shift+P`) — search
@@ -103,3 +106,8 @@ cloudflared tunnel --url http://127.0.0.1:8091
   needs internet; it typically keeps working offline after that via
   WebView caching, though that's not a guarantee the way a bundled
   offline copy would be.
+
+
+### GDScript formatting
+
+`.gd` files use the browser build of `pretty-gd-js` (v1.18.1), the formatter family used by the pretty.gd Godot/VS Code integration. If the formatter CDN is unavailable, COODEV falls back to its built-in GDScript formatter.

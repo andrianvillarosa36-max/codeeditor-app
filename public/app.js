@@ -14,6 +14,7 @@ let autoClosing = false; // reentrancy guard for the auto-close-tag feature
 let pasteGuardUntil = 0; // suppress auto-close for a moment after any paste
 let suppressNextClick = false; // set true right before a long-press fires, to swallow the trailing click
 let formatOnSave = false;
+let formatOnPaste = true; // VS Code-like: pasted code is formatted immediately for supported languages
 let formatterBusy = false;
 
 let ROOT = '/storage/emulated/0';
@@ -30,6 +31,8 @@ function LocalServer() { return Capacitor.Plugins.LocalServer; }
 
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs' } });
 require(['vs/editor/editor.main'], () => {
+  registerGDScriptLanguage();
+  registerGDScriptFormatter();
   editor = monaco.editor.create(document.getElementById('editor-container'), {
     value: '',
     language: 'plaintext',
@@ -46,7 +49,12 @@ require(['vs/editor/editor.main'], () => {
   // Mobile paste can arrive as a burst of individual character insertions
   // rather than one clean block, which fooled the auto-close-tag feature
   // into firing mid-paste. Suppress it for a moment around any paste.
-  editor.onDidPaste(() => { pasteGuardUntil = Date.now() + 1000; });
+  editor.onDidPaste(() => {
+    pasteGuardUntil = Date.now() + 1000;
+    // Give Monaco/Android WebView a moment to finish the paste transaction,
+    // then format the pasted GDScript just like a paste-and-pretty-print editor.
+    if (formatOnPaste) setTimeout(() => formatAfterPaste(), 60);
+  });
 
   editor.onDidChangeModelContent((e) => {
     if (activeTab && openTabs[activeTab] && openTabs[activeTab].type === 'text') {
@@ -215,7 +223,7 @@ function langFromExt(name) {
   const ext = name.split('.').pop().toLowerCase();
   const map = {
     js: 'javascript', jsx: 'javascript', mjs: 'javascript', ts: 'typescript', tsx: 'typescript',
-    py: 'python', html: 'html', htm: 'html', css: 'css', scss: 'scss', json: 'json',
+    py: 'python', gd: 'gdscript', html: 'html', htm: 'html', css: 'css', scss: 'scss', json: 'json',
     md: 'markdown', sh: 'shell', bash: 'shell', java: 'java', c: 'c', h: 'c', cpp: 'cpp',
     hpp: 'cpp', go: 'go', rs: 'rust', php: 'php', rb: 'ruby', xml: 'xml',
     yml: 'yaml', yaml: 'yaml', sql: 'sql', txt: 'plaintext', env: 'ini', toml: 'ini',
@@ -225,7 +233,7 @@ function langFromExt(name) {
 
 const ICON_BY_EXT = {
   html: '🟧', htm: '🟧', css: '🟦', scss: '🟦', js: '🟨', jsx: '🟨', ts: '🟦', tsx: '🟦',
-  json: '📋', md: '📝', py: '🐍',
+  json: '📋', md: '📝', py: '🐍', gd: '🎮',
   png: '🖼️', jpg: '🖼️', jpeg: '🖼️', gif: '🖼️', svg: '🖼️', webp: '🖼️', ico: '🖼️',
 };
 function iconFor(name) {
@@ -548,6 +556,286 @@ function renderOpenEditors() {
   });
 }
 
+// ---------------- GDScript language + formatter ----------------
+// Monaco does not ship a built-in GDScript language/formatter. Register a
+// Godot-aware language definition and a formatter provider for .gd files.
+function registerGDScriptLanguage() {
+  if (monaco.languages.getLanguages().some((l) => l.id === 'gdscript')) return;
+
+  monaco.languages.register({ id: 'gdscript', extensions: ['.gd'] });
+  monaco.languages.setMonarchTokensProvider('gdscript', {
+    defaultToken: '',
+    tokenPostfix: '.gd',
+    keywords: [
+      'and','as','await','break','class','class_name','const','continue','elif','else',
+      'enum','extends','for','func','if','in','is','match','not','or','pass','preload',
+      'return','signal','static','super','var','while','yield','true','false','null',
+    ],
+    typeKeywords: [
+      'void','bool','int','float','String','Vector2','Vector2i','Vector3','Vector3i',
+      'Color','Array','Dictionary','Node','Node2D','Node3D','Object','Callable','Signal',
+      'Variant','StringName','Transform2D','Transform3D','Quaternion','Basis','Rect2','Rect2i',
+    ],
+    operators: [
+      '=',':=','+=','-=','*=','/=','%=','==','!=','<=','>=','<','>','+','-','*','/','%','**',
+      '&&','||','!','&','|','^','~','<<','>>','=>',
+    ],
+    symbols: /[=><!~?:&|+\-*\/\^%]+/,
+    escapes: /\\(?:[abfnrtv\\"']|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/,
+    tokenizer: {
+      root: [
+        { include: '@whitespace' },
+        [/[A-Z_][A-Za-z0-9_]*/, { cases: { '@typeKeywords': 'type.identifier', '@default': 'identifier' } }],
+        [/[a-z_][A-Za-z0-9_]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+        [/\b0[bB][01_]+\b/, 'number.binary'],
+        [/\b0[oO][0-7_]+\b/, 'number.octal'],
+        [/\b0[xX][0-9a-fA-F_]+\b/, 'number.hex'],
+        [/\b\d[\d_]*(\.\d[\d_]*)?([eE][+-]?\d[\d_]*)?\b/, 'number'],
+        [/[{}()\[\]]/, '@brackets'],
+        [/[;,.]/, 'delimiter'],
+        [/[=><!~?:&|+\-*\/\^%]+/, { cases: { '@operators': 'operator', '@default': 'operator' } }],
+        [/'([^'\\]|\\.)*'/, 'string'],
+        [/"([^"\\]|\\.)*"/, 'string'],
+      ],
+      whitespace: [
+        [/[ \t\r\n]+/, 'white'],
+        [/#.*$/, 'comment'],
+      ],
+    },
+  });
+
+  monaco.languages.setLanguageConfiguration('gdscript', {
+    comments: { lineComment: '#' },
+    brackets: [['[', ']'], ['{', '}'], ['(', ')']],
+    autoClosingPairs: [
+      { open: '(', close: ')' }, { open: '[', close: ']' }, { open: '{', close: '}' },
+      { open: '"', close: '"' }, { open: "'", close: "'" },
+    ],
+    surroundingPairs: [
+      { open: '(', close: ')' }, { open: '[', close: ']' }, { open: '{', close: '}' },
+      { open: '"', close: '"' }, { open: "'", close: "'" },
+    ],
+    indentationRules: {
+      increaseIndentPattern: /^\s*(?:func|if|elif|else|for|while|match|class|class_name|enum|signal|static func|const|var).*:\s*(?:#.*)?$/,
+      decreaseIndentPattern: /^\s*(?:elif|else|except|finally)\b/,
+    },
+  });
+}
+
+function gdStripStringAndComment(line) {
+  let out = '';
+  let quote = null;
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const next = line[i + 1];
+    if (quote) {
+      out += ' ';
+      if (escaped) { escaped = false; continue; }
+      if (ch === '\\') { escaped = true; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; out += ' '; continue; }
+    if (ch === '#' && next !== '#') { out += ' '.repeat(line.length - i); break; }
+    out += ch;
+  }
+  return out;
+}
+
+function gdIndentDelta(clean) {
+  const trimmed = clean.trim();
+  if (!trimmed) return 0;
+  if (/^(elif|else|except|finally)\b/.test(trimmed)) return -1;
+  if (/^(case)\b/.test(trimmed)) return -1;
+  return 0;
+}
+
+function gdLineOpensBlock(clean) {
+  const trimmed = clean.trim();
+  if (!trimmed || trimmed.startsWith('#')) return false;
+  // GDScript blocks are introduced by a trailing colon. Ignore dictionary
+  // literals and typed expressions where a colon appears before the end.
+  if (!trimmed.endsWith(':')) return false;
+  return /\b(func|if|elif|else|for|while|match|class|class_name|enum|signal|static func|try|except|finally)\b/.test(trimmed)
+    || /^\s*[A-Za-z_][\w]*(?:\.[A-Za-z_]\w*)*\s*:\s*$/.test(trimmed)
+    || trimmed === 'else:';
+}
+
+function gdNormalizeLineContent(content) {
+  if (!content.trim() || content.trim().startsWith('#')) return content.trimEnd();
+  const indent = (content.match(/^\s*/) || [''])[0];
+  let body = content.slice(indent.length).trimEnd();
+
+  // Split code from an inline comment without touching # inside strings.
+  let quote = null;
+  let escaped = false;
+  let commentIndex = -1;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === '#') { commentIndex = i; break; }
+  }
+
+  let code = commentIndex >= 0 ? body.slice(0, commentIndex).trimEnd() : body;
+  const comment = commentIndex >= 0 ? body.slice(commentIndex).trimEnd() : '';
+
+  // Protect tokens that must never receive generic operator spacing.
+  // This is especially important for Godot node paths such as
+  // $PromptCanvas/OpenButton and %UniqueNode/Child.
+  const protectedTokens = [];
+  const protect = (value) => {
+    const token = `\u0000GD${protectedTokens.length}\u0000`;
+    protectedTokens.push(value);
+    return token;
+  };
+
+  code = code.replace(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, protect);
+  code = code.replace(/(?:[$%^&][A-Za-z_][A-Za-z0-9_./-]*)/g, protect);
+
+  // Normalize spacing conservatively. We intentionally avoid changing
+  // whitespace inside strings and Godot node paths.
+  const opTokens = [];
+  code = code.replace(/:=|==|!=|<=|>=|\+=|-=|\*=|\/=|%=|=>|->|\*\*/g, (m) => {
+    const token = `\u0000GDOP${opTokens.length}\u0000`;
+    opTokens.push(m);
+    return token;
+  });
+
+  code = code
+    .replace(/\s*([=<>+\-*%])\s*/g, ' $1 ')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\b(if|elif|for|while|match|await|return|not|in|is)\s*\(/g, '$1 (')
+    .replace(/\(\s+/g, '(')
+    .replace(/\s+\)/g, ')')
+    .replace(/\[\s+/g, '[')
+    .replace(/\s+\]/g, ']')
+    .replace(/\{\s+/g, '{')
+    .replace(/\s+\}/g, '}')
+    .replace(/\s*:\s*/g, ': ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([),\]])/g, '$1')
+    .trim();
+
+  code = code.replace(/\u0000GDOP(\d+)\u0000/g, (_, i) => ` ${opTokens[Number(i)]} `);
+  code = code.replace(/\s+(:|->|=>)\s+/g, ' $1 ');
+  code = code.replace(/\u0000GD(\d+)\u0000/g, (_, i) => protectedTokens[Number(i)]);
+  return indent + code + (comment ? `  ${comment}` : '');
+}
+
+function gdIndentUnitForSource(source) {
+  const runs = [];
+  for (const line of source.split('\n')) {
+    const m = line.match(/^ +/);
+    if (m) runs.push(m[0].length);
+  }
+  if (!runs.length) return 4;
+  const gcd = (a, b) => { while (b) { const t = a % b; a = b; b = t; } return a; };
+  let unit = runs.reduce((a, b) => gcd(a, b), runs[0]);
+  return Math.min(4, Math.max(1, unit));
+}
+
+function gdRawIndentLevel(line, indentUnit) {
+  const m = line.match(/^[ \t]*/)?.[0] || '';
+  let width = 0;
+  for (const ch of m) width += ch === '\t' ? 4 : 1;
+  return Math.floor(width / indentUnit);
+}
+
+function formatGDScriptText(source, options = {}) {
+  const lines = source.replace(/\r\n?/g, '\n').split('\n');
+  const out = [];
+  let level = 0;
+  let formatting = true;
+  let previousOpenedBlock = false;
+  let previousHadCode = false;
+  const indentUnit = '\t';
+  const sourceIndentUnit = gdIndentUnitForSource(source);
+
+  for (const raw of lines) {
+    const stripped = raw.trim();
+    if (stripped === '# fmt: off' || stripped === '#fmt:off') {
+      formatting = false;
+      out.push(raw.replace(/\s+$/, ''));
+      continue;
+    }
+    if (!formatting) {
+      out.push(raw.replace(/\s+$/, ''));
+      if (stripped === '# fmt: on' || stripped === '#fmt:on') formatting = true;
+      continue;
+    }
+
+    if (!stripped) {
+      if (out.length && out[out.length - 1] !== '') out.push('');
+      previousOpenedBlock = false;
+      continue;
+    }
+
+    const clean = gdStripStringAndComment(raw).trim();
+    const rawLevel = gdRawIndentLevel(raw, sourceIndentUnit);
+    const dedent = /^(elif|else|except|finally)\b/.test(clean) || /^(case)\b/.test(clean);
+
+    if (!previousHadCode) {
+      level = rawLevel;
+    } else if (dedent) {
+      level = Math.max(0, level - 1);
+      if (rawLevel < level) level = rawLevel;
+    } else if (previousOpenedBlock) {
+      // A line after a block opener belongs one level deeper unless the
+      // source already gives us an even deeper (valid) indentation.
+      level = Math.max(level + 1, rawLevel);
+    } else if (rawLevel < level) {
+      // Explicitly dedented source line: follow the source's dedent.
+      level = rawLevel;
+    } else if (rawLevel > level) {
+      // Preserve legitimate nested indentation.
+      level = rawLevel;
+    }
+
+    const normalized = gdNormalizeLineContent(raw).trim();
+    out.push(indentUnit.repeat(Math.max(0, level)) + normalized);
+
+    previousOpenedBlock = gdLineOpensBlock(clean);
+    previousHadCode = true;
+  }
+
+  while (out.length && out[out.length - 1] === '') out.pop();
+  const result = out.join('\n');
+  return options.preserveTrailingNewline === false ? result : result + '\n';
+}
+
+// GDScript formatting is implemented locally so it also works in Android WebView
+// without relying on a remote formatter/CDN or dynamic module imports.
+
+function registerGDScriptFormatter() {
+  monaco.languages.registerDocumentFormattingEditProvider('gdscript', {
+    async provideDocumentFormattingEdits(model) {
+      const before = model.getValue();
+      const after = formatGDScriptText(before);
+      if (after === before) return [];
+      return [{ range: model.getFullModelRange(), text: after }];
+    },
+  });
+
+  monaco.languages.registerDocumentRangeFormattingEditProvider('gdscript', {
+    async provideDocumentRangeFormattingEdits(model, range) {
+      const before = model.getValue();
+      const startOffset = model.getOffsetAt(range.getStartPosition());
+      const endOffset = model.getOffsetAt(range.getEndPosition());
+      const selected = before.slice(startOffset, endOffset);
+      const after = formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
+      if (after === selected) return [];
+      return [{ range, text: after }];
+    },
+  });
+}
+
 // ---------------- Formatting (Prettier-style, with Monaco fallback) ----------------
 // Prettier is loaded in index.html from its browser/UMD build. We deliberately
 // keep the formatter optional: languages without a Prettier parser fall back
@@ -633,6 +921,31 @@ async function formatActiveDocument(selectionOnly = false) {
   try {
     const parser = formatterParserForModel(model);
     const source = model.getValue();
+
+    const isGDScript = model.getLanguageId() === 'gdscript' || /\.gd$/i.test(activeTab || '');
+    if (isGDScript) {
+      const selection = editor.getSelection();
+      const hasSelection = !!selection && !selection.isEmpty();
+      const shouldFormatSelection = selectionOnly && hasSelection;
+      if (shouldFormatSelection) {
+        const range = selection;
+        const selected = model.getValueInRange(range);
+        const local = formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
+        const formatted = local;
+        if (formatted !== selected) {
+          editor.pushUndoStop();
+          editor.executeEdits('gdscript-formatter', [{ range, text: formatted, forceMoveMarkers: true }]);
+          editor.pushUndoStop();
+        }
+        showToast(formatted !== selected ? 'GDScript selection formatted ✓' : 'GDScript already formatted');
+      } else {
+        const local = formatGDScriptText(source);
+        const changed = replaceModelText(local, 'gdscript-formatter');
+        showToast(changed ? 'GDScript formatted ✓' : 'GDScript already formatted');
+      }
+      editor.focus();
+      return true;
+    }
     const selection = editor.getSelection();
 
     // Selection formatting is only attempted with Prettier when there is a
@@ -682,6 +995,23 @@ async function formatActiveDocument(selectionOnly = false) {
   } finally {
     formatterBusy = false;
   }
+}
+
+async function toggleFormatOnPaste() {
+  formatOnPaste = !formatOnPaste;
+  const state = formatOnPaste ? 'On' : 'Off';
+  const btn = document.getElementById('format-paste-toggle');
+  if (btn) btn.textContent = `Format on Paste: ${state}`;
+  showToast(`Format on Paste: ${state}`);
+}
+
+async function formatAfterPaste() {
+  if (!formatOnPaste || formatterBusy || !editor) return false;
+  const model = editor.getModel();
+  if (!model || !activeTab || !openTabs[activeTab] || openTabs[activeTab].type !== 'text') return false;
+  const isGDScript = model.getLanguageId() === 'gdscript' || /\.gd$/i.test(activeTab || '');
+  if (!isGDScript) return false;
+  return formatActiveDocument(false);
 }
 
 async function toggleFormatOnSave() {
@@ -758,6 +1088,7 @@ async function pasteClipboard() {
     editor.executeEdits('paste', [{ range: sel, text, forceMoveMarkers: true }]);
     editor.focus();
     showToast('Pasted');
+    if (formatOnPaste) setTimeout(() => formatAfterPaste(), 60);
   } catch (e) { alert('Paste failed: ' + e.message); }
 }
 
@@ -818,6 +1149,7 @@ document.getElementById('font-inc').addEventListener('click', fontInc);
 document.getElementById('wrap-toggle').addEventListener('click', toggleWrap);
 document.getElementById('format-btn').addEventListener('click', () => formatActiveDocument(false));
 document.getElementById('format-toggle').addEventListener('click', toggleFormatOnSave);
+document.getElementById('format-paste-toggle').addEventListener('click', toggleFormatOnPaste);
 document.getElementById('toggle-sidebar').addEventListener('click', toggleSidebarFn);
 
 // ---------------- Extra-keys row (Home/End/Arrows/Tab + sticky Shift/Ctrl) ----------------
@@ -1098,8 +1430,10 @@ function commandList() {
     { label: 'Save', run: saveActive },
     { label: 'Save All', run: saveAll },
     { label: 'Format Document', run: () => formatActiveDocument(false) },
+    { label: 'Format GDScript', run: () => formatActiveDocument(false) },
     { label: 'Format Selection', run: () => formatActiveDocument(true) },
     { label: 'Toggle Format on Save', run: toggleFormatOnSave },
+    { label: 'Toggle Format on Paste', run: toggleFormatOnPaste },
     { label: 'New File…', run: newFile },
     { label: 'New Project…', run: newProject },
     { label: 'Toggle Preview', run: togglePreview },
