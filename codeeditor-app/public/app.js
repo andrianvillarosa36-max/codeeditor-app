@@ -552,8 +552,7 @@ function renderOpenEditors() {
 
 // ---------------- GDScript language + formatter ----------------
 // Monaco does not ship a built-in GDScript language/formatter. Register a
-// lightweight Godot-aware language definition and an editor formatter so .gd
-// files get proper syntax highlighting, indentation, and common spacing fixes.
+// Godot-aware language definition and a formatter provider for .gd files.
 function registerGDScriptLanguage() {
   if (monaco.languages.getLanguages().some((l) => l.id === 'gdscript')) return;
 
@@ -661,54 +660,99 @@ function gdNormalizeLineContent(content) {
   if (!content.trim() || content.trim().startsWith('#')) return content.trimEnd();
   const indent = (content.match(/^\s*/) || [''])[0];
   let body = content.slice(indent.length).trimEnd();
-  const split = gdStripStringAndComment(body);
-  const commentIndex = (() => {
-    let quote = null, escaped = false;
-    for (let i=0;i<body.length;i++) {
-      const ch=body[i];
-      if (quote) { if (escaped) escaped=false; else if(ch==='\\') escaped=true; else if(ch===quote) quote=null; continue; }
-      if (ch==='"'||ch==="'") { quote=ch; continue; }
-      if (ch==='#') return i;
+
+  // Split code from an inline comment without touching # inside strings.
+  let quote = null;
+  let escaped = false;
+  let commentIndex = -1;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === quote) quote = null;
+      continue;
     }
-    return -1;
-  })();
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (ch === '#') { commentIndex = i; break; }
+  }
+
   let code = commentIndex >= 0 ? body.slice(0, commentIndex).trimEnd() : body;
   const comment = commentIndex >= 0 ? body.slice(commentIndex).trimEnd() : '';
 
-  // Conservative spacing fixes that avoid modifying string literals.
-  const placeholders = [];
-  code = code.replace(/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, (m) => {
-    const token = `\u0000${placeholders.length}\u0000`;
-    placeholders.push(m);
+  // Protect tokens that must never receive generic operator spacing.
+  // This is especially important for Godot node paths such as
+  // $PromptCanvas/OpenButton and %UniqueNode/Child.
+  const protectedTokens = [];
+  const protect = (value) => {
+    const token = `\u0000GD${protectedTokens.length}\u0000`;
+    protectedTokens.push(value);
+    return token;
+  };
+
+  code = code.replace(/(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, protect);
+  code = code.replace(/(?:[$%^&][A-Za-z_][A-Za-z0-9_./-]*)/g, protect);
+
+  // Normalize spacing conservatively. We intentionally avoid changing
+  // whitespace inside strings and Godot node paths.
+  const opTokens = [];
+  code = code.replace(/:=|==|!=|<=|>=|\+=|-=|\*=|\/=|%=|=>|->|\*\*/g, (m) => {
+    const token = `\u0000GDOP${opTokens.length}\u0000`;
+    opTokens.push(m);
     return token;
   });
+
   code = code
-    .replace(/\s*:=\s*/g, ' := ')
-    .replace(/\s*(==|!=|<=|>=|\+=|-=|\*=|\/=|%=|=>|->|\*\*)\s*/g, ' $1 ')
-    .replace(/\s*([=<>+\-*/%])\s*/g, ' $1 ')
-    .replace(/-\s+>/g, '->')
+    .replace(/\s*([=<>+\-*%])\s*/g, ' $1 ')
     .replace(/\s*,\s*/g, ', ')
+    .replace(/\b(if|elif|for|while|match|await|return|not|in|is)\s*\(/g, '$1 (')
     .replace(/\(\s+/g, '(')
     .replace(/\s+\)/g, ')')
     .replace(/\[\s+/g, '[')
     .replace(/\s+\]/g, ']')
+    .replace(/\{\s+/g, '{')
+    .replace(/\s+\}/g, '}')
     .replace(/\s*:\s*/g, ': ')
     .replace(/\s{2,}/g, ' ')
     .replace(/\s+([),\]])/g, '$1')
     .trim();
-  code = code.replace(/\u0000(\d+)\u0000/g, (_, i) => placeholders[Number(i)]);
+
+  code = code.replace(/\u0000GDOP(\d+)\u0000/g, (_, i) => ` ${opTokens[Number(i)]} `);
+  code = code.replace(/\s+(:|->|=>)\s+/g, ' $1 ');
+  code = code.replace(/\u0000GD(\d+)\u0000/g, (_, i) => protectedTokens[Number(i)]);
   return indent + code + (comment ? `  ${comment}` : '');
+}
+
+function gdIndentUnitForSource(source) {
+  const runs = [];
+  for (const line of source.split('\n')) {
+    const m = line.match(/^ +/);
+    if (m) runs.push(m[0].length);
+  }
+  if (!runs.length) return 4;
+  const gcd = (a, b) => { while (b) { const t = a % b; a = b; b = t; } return a; };
+  let unit = runs.reduce((a, b) => gcd(a, b), runs[0]);
+  return Math.min(4, Math.max(1, unit));
+}
+
+function gdRawIndentLevel(line, indentUnit) {
+  const m = line.match(/^[ \t]*/)?.[0] || '';
+  let width = 0;
+  for (const ch of m) width += ch === '\t' ? 4 : 1;
+  return Math.floor(width / indentUnit);
 }
 
 function formatGDScriptText(source, options = {}) {
   const lines = source.replace(/\r\n?/g, '\n').split('\n');
   const out = [];
-  let indent = 0;
+  let level = 0;
   let formatting = true;
+  let previousOpenedBlock = false;
+  let previousHadCode = false;
   const indentUnit = '\t';
-  let bracketDepth = 0;
+  const sourceIndentUnit = gdIndentUnitForSource(source);
 
-  for (let raw of lines) {
+  for (const raw of lines) {
     const stripped = raw.trim();
     if (stripped === '# fmt: off' || stripped === '#fmt:off') {
       formatting = false;
@@ -720,30 +764,39 @@ function formatGDScriptText(source, options = {}) {
       if (stripped === '# fmt: on' || stripped === '#fmt:on') formatting = true;
       continue;
     }
+
     if (!stripped) {
       if (out.length && out[out.length - 1] !== '') out.push('');
+      previousOpenedBlock = false;
       continue;
     }
 
-    const clean = gdStripStringAndComment(raw);
-    const dedent = gdIndentDelta(clean);
-    indent = Math.max(0, indent + dedent);
-    const normalized = gdNormalizeLineContent(raw).trim();
+    const clean = gdStripStringAndComment(raw).trim();
+    const rawLevel = gdRawIndentLevel(raw, sourceIndentUnit);
+    const dedent = /^(elif|else|except|finally)\b/.test(clean) || /^(case)\b/.test(clean);
 
-    // Keep continuation lines indented under collection/call expressions.
-    const leadingBracketExtra = bracketDepth > 0 ? 1 : 0;
-    out.push(indentUnit.repeat(indent + leadingBracketExtra) + normalized);
-
-    const scan = gdStripStringAndComment(normalized);
-    const opens = gdLineOpensBlock(scan);
-    if (opens) indent++;
-
-    let depth = bracketDepth;
-    for (const ch of scan) {
-      if (ch === '[' || ch === '(' || ch === '{') depth++;
-      else if (ch === ']' || ch === ')' || ch === '}') depth = Math.max(0, depth - 1);
+    if (!previousHadCode) {
+      level = rawLevel;
+    } else if (dedent) {
+      level = Math.max(0, level - 1);
+      if (rawLevel < level) level = rawLevel;
+    } else if (previousOpenedBlock) {
+      // A line after a block opener belongs one level deeper unless the
+      // source already gives us an even deeper (valid) indentation.
+      level = Math.max(level + 1, rawLevel);
+    } else if (rawLevel < level) {
+      // Explicitly dedented source line: follow the source's dedent.
+      level = rawLevel;
+    } else if (rawLevel > level) {
+      // Preserve legitimate nested indentation.
+      level = rawLevel;
     }
-    bracketDepth = depth;
+
+    const normalized = gdNormalizeLineContent(raw).trim();
+    out.push(indentUnit.repeat(Math.max(0, level)) + normalized);
+
+    previousOpenedBlock = gdLineOpensBlock(clean);
+    previousHadCode = true;
   }
 
   while (out.length && out[out.length - 1] === '') out.pop();
@@ -751,79 +804,14 @@ function formatGDScriptText(source, options = {}) {
   return options.preserveTrailingNewline === false ? result : result + '\n';
 }
 
-// Use the same family of formatter as the popular pretty.gd VS Code/Godot
-// formatter. It is a real GDScript tokenizer/formatter, not just indentation
-// rules. We load the ESM build lazily so the editor still starts if the CDN is
-// temporarily unavailable; the local formatter below remains the safe fallback.
-let prettyGdPromise = null;
-let prettyGdInstance = null;
-
-async function getPrettyGdFormatter() {
-  if (!prettyGdPromise) {
-    prettyGdPromise = import('https://cdn.jsdelivr.net/npm/pretty-gd-js@1.18.1/+esm')
-      .then((mod) => {
-        const candidates = [
-          mod.prettify,
-          mod.format,
-          mod.pretty,
-          mod.default,
-          mod.Prettifier,
-          mod.PrettyGd,
-        ];
-        for (const candidate of candidates) {
-          if (!candidate) continue;
-          if (typeof candidate === 'object' && typeof candidate.prettify === 'function') {
-            prettyGdInstance = candidate;
-            return candidate;
-          }
-          if (typeof candidate === 'function') {
-            // Some builds export prettify(source) directly; others export the
-            // Prettifier class used by the Godot/VS Code integration.
-            try {
-              const direct = candidate('');
-              if (typeof direct === 'string') {
-                prettyGdInstance = { prettify: candidate };
-                return prettyGdInstance;
-              }
-            } catch (_) {}
-            try {
-              const instance = new candidate();
-              if (instance && typeof instance.prettify === 'function') {
-                if ('indent_str' in instance) instance.indent_str = '\\t';
-                if ('tab_size' in instance) instance.tab_size = 4;
-                prettyGdInstance = instance;
-                return instance;
-              }
-            } catch (_) {}
-          }
-        }
-        throw new Error('Unsupported pretty-gd-js export');
-      })
-      .catch((err) => {
-        prettyGdPromise = null;
-        throw err;
-      });
-  }
-  return prettyGdPromise;
-}
-
-async function formatGDScriptWithPrettyGd(source) {
-  try {
-    const formatter = await getPrettyGdFormatter();
-    const result = await formatter.prettify(source);
-    if (typeof result === 'string') return result.endsWith('\\n') ? result : result + '\\n';
-  } catch (err) {
-    console.warn('pretty-gd-js unavailable; using built-in GDScript formatter:', err);
-  }
-  return null;
-}
+// GDScript formatting is implemented locally so it also works in Android WebView
+// without relying on a remote formatter/CDN or dynamic module imports.
 
 function registerGDScriptFormatter() {
   monaco.languages.registerDocumentFormattingEditProvider('gdscript', {
     async provideDocumentFormattingEdits(model) {
       const before = model.getValue();
-      const pretty = await formatGDScriptWithPrettyGd(before);
-      const after = pretty !== null ? pretty : formatGDScriptText(before);
+      const after = formatGDScriptText(before);
       if (after === before) return [];
       return [{ range: model.getFullModelRange(), text: after }];
     },
@@ -835,8 +823,7 @@ function registerGDScriptFormatter() {
       const startOffset = model.getOffsetAt(range.getStartPosition());
       const endOffset = model.getOffsetAt(range.getEndPosition());
       const selected = before.slice(startOffset, endOffset);
-      const pretty = await formatGDScriptWithPrettyGd(selected);
-      const after = pretty !== null ? pretty : formatGDScriptText(selected);
+      const after = formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
       if (after === selected) return [];
       return [{ range, text: after }];
     },
@@ -937,19 +924,18 @@ async function formatActiveDocument(selectionOnly = false) {
       if (shouldFormatSelection) {
         const range = selection;
         const selected = model.getValueInRange(range);
-        const pretty = await formatGDScriptWithPrettyGd(selected);
-        const formatted = pretty !== null ? pretty : formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
+        const local = formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
+        const formatted = local;
         if (formatted !== selected) {
           editor.pushUndoStop();
           editor.executeEdits('gdscript-formatter', [{ range, text: formatted, forceMoveMarkers: true }]);
           editor.pushUndoStop();
         }
-        showToast(formatted !== selected ? 'GDScript selection formatted ✓' : 'Already formatted');
+        showToast(formatted !== selected ? 'GDScript selection formatted ✓' : 'GDScript already formatted');
       } else {
-        const pretty = await formatGDScriptWithPrettyGd(source);
-      const formatted = pretty !== null ? pretty : formatGDScriptText(source);
-        const changed = replaceModelText(formatted, 'gdscript-formatter');
-        showToast(changed ? 'GDScript formatted ✓' : 'Already formatted');
+        const local = formatGDScriptText(source);
+        const changed = replaceModelText(local, 'gdscript-formatter');
+        showToast(changed ? 'GDScript formatted ✓' : 'GDScript already formatted');
       }
       editor.focus();
       return true;
@@ -1419,6 +1405,7 @@ function commandList() {
     { label: 'Save', run: saveActive },
     { label: 'Save All', run: saveAll },
     { label: 'Format Document', run: () => formatActiveDocument(false) },
+    { label: 'Format GDScript', run: () => formatActiveDocument(false) },
     { label: 'Format Selection', run: () => formatActiveDocument(true) },
     { label: 'Toggle Format on Save', run: toggleFormatOnSave },
     { label: 'New File…', run: newFile },
