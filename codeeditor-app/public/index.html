@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>COODEV</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="topbar">
+    <button id="toggle-sidebar" title="Toggle explorer">☰</button>
+    <div id="topbar-actions">
+      <button id="btn-preview">Preview</button>
+      <button id="new-file-btn">+ File</button>
+      <button id="new-project-btn">New Project</button>
+      <button id="save-btn">Save</button>
+      <button id="save-all-btn">Save All</button>
+      <button id="format-btn" title="Format Document (Shift+Alt+F)">Format</button>
+      <button id="format-toggle" title="Toggle automatic formatting when saving">Format on Save: Off</button>
+      <button id="font-dec" title="Smaller text">A-</button>
+      <button id="font-inc" title="Larger text">A+</button>
+      <button id="wrap-toggle" title="Toggle word wrap">Wrap: Off</button>
+      <button id="quick-open-btn" title="Jump to a file by name">Go to File</button>
+      <button id="command-palette-btn" title="Run any editor command by tap">Commands</button>
+      <button id="git-btn" title="Git status, commit, push, pull">Git</button>
+      <button id="run-btn" title="Run the current .js file and see its output">▶ Run</button>
+    </div>
+  </div>
+  <div id="extra-keys">
+    <button id="key-shift" class="modkey" title="Sticky Shift: makes the next Home/End/Arrow tap select instead of just move">SHIFT</button>
+    <button id="key-ctrl" class="modkey" title="Sticky Ctrl: makes the next Left/Right tap jump by word">CTRL</button>
+    <button id="key-home">HOME</button>
+    <button id="key-end">END</button>
+    <button id="key-left">←</button>
+    <button id="key-up">↑</button>
+    <button id="key-down">↓</button>
+    <button id="key-right">→</button>
+    <button id="key-tab">TAB</button>
+  </div>
+  <div id="main">
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <button id="home-btn" title="Back to full storage">🏠 Home</button>
+        <span id="root-path"></span>
+      </div>
+      <div id="open-editors" class="hidden">
+        <div class="sidebar-section-title">OPEN EDITORS</div>
+        <div id="open-editors-list"></div>
+      </div>
+      <div class="sidebar-section-title">EXPLORER</div>
+      <input id="tree-filter" type="text" placeholder="Filter files…" />
+      <div id="file-tree"></div>
+    </div>
+    <div id="editor-area">
+      <div id="tabs"></div>
+      <div id="breadcrumb"></div>
+      <div id="editor-container"></div>
+      <div id="image-viewer" class="hidden">
+        <img id="image-viewer-img" alt="preview" />
+      </div>
+      <div id="empty-state">Open a file from the explorer to start editing.</div>
+      <div id="preview-panel" class="hidden">
+        <div id="preview-topbar">
+          <span>Preview</span>
+          <div id="preview-topbar-actions">
+            <button id="preview-device-toggle">📱 Mobile</button>
+            <button id="close-preview">✕ Close</button>
+          </div>
+        </div>
+        <iframe id="preview-frame" sandbox="allow-scripts"></iframe>
+      </div>
+      <div id="permission-gate" class="hidden">
+        <div class="gate-box">
+          <h2>Storage access needed</h2>
+          <p>This editor reads and writes real files on your device, so it
+             needs the "All files access" permission — the same one file
+             manager apps use.</p>
+          <button id="grant-btn">Grant Access</button>
+          <p id="gate-hint" class="gate-hint">This opens Android Settings. Flip the toggle on, then come back here.</p>
+          <button id="continue-btn" class="secondary">Continue</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="quick-open" class="hidden modal-overlay">
+    <div class="modal-box">
+      <input id="quick-open-input" type="text" placeholder="Go to file… (type a name)" />
+      <div id="quick-open-list" class="modal-list"></div>
+      <div class="modal-hint">Esc to close · Enter to open</div>
+    </div>
+  </div>
+
+  <div id="command-palette" class="hidden modal-overlay">
+    <div class="modal-box">
+      <input id="command-palette-input" type="text" placeholder="Type a command…" />
+      <div id="command-palette-list" class="modal-list"></div>
+      <div class="modal-hint">Esc to close · Enter to run</div>
+    </div>
+  </div>
+
+  <div id="action-sheet" class="hidden modal-overlay">
+    <div class="modal-box">
+      <div id="action-sheet-title" class="modal-title"></div>
+      <div id="action-sheet-list" class="modal-list"></div>
+    </div>
+  </div>
+
+  <div id="git-panel" class="hidden modal-overlay">
+    <div class="modal-box git-box">
+      <div class="modal-title">Git — <span id="git-panel-root"></span></div>
+      <div id="git-lib-status" class="git-hint"></div>
+
+      <div id="git-not-repo" class="hidden git-section">
+        <p class="git-hint">This folder isn't a git repository yet.</p>
+        <div class="git-actions">
+          <button id="git-init-btn">Init Repository Here</button>
+          <button id="git-clone-btn">Clone a Repository…</button>
+        </div>
+      </div>
+
+      <div id="git-is-repo" class="hidden git-section">
+        <div id="git-status-list" class="modal-list git-status-list"></div>
+        <textarea id="git-commit-message" placeholder="Commit message…"></textarea>
+        <div class="git-actions">
+          <button id="git-commit-btn">Commit All</button>
+          <button id="git-push-btn">Push</button>
+          <button id="git-pull-btn">Pull</button>
+          <button id="git-remote-btn">Set Remote…</button>
+        </div>
+      </div>
+
+      <div id="git-busy" class="hidden git-hint"></div>
+
+      <div class="git-actions git-footer">
+        <button id="git-settings-btn">Git Settings</button>
+        <button id="git-close-btn" class="secondary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="output-panel" class="hidden">
+    <div id="output-header">
+      <span class="output-tab active">OUTPUT</span>
+      <button id="output-close">✕</button>
+    </div>
+    <div id="output-list"></div>
+  </div>
+  <iframe id="run-frame" class="hidden" sandbox="allow-scripts"></iframe>
+
+  <div id="toast-msg"></div>
+
+  <script src="buffer-shim.js"></script>
+  <script>window.__preGitKeys = Object.keys(window);</script>
+  <script src="vendor/isomorphic-git.js"></script>
+  <script src="vendor/isomorphic-git-http-web.js"></script>
+  <script>
+    // Rather than assume the UMD bundles expose fixed global names (which
+    // just turned out to have changed across a major version bump), record
+    // every new global these two scripts actually created. app.js then
+    // identifies which one is which by shape (has .clone/.statusMatrix ->
+    // the git library; has .request -> the http client) instead of by name.
+    //
+    // Loaded BEFORE Monaco's AMD loader below on purpose: a UMD bundle
+    // checks for an AMD environment (a global `define` with `.amd`) and
+    // registers itself as an AMD module instead of a plain global if it
+    // finds one. Monaco's loader sets exactly that up, so isomorphic-git
+    // has to run first, while no AMD loader exists yet.
+    window.__gitNewGlobals = Object.keys(window).filter(function (k) {
+      return window.__preGitKeys.indexOf(k) === -1 && k !== '__preGitKeys';
+    });
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+
+  <!-- Prettier browser build + first-party parser plugins.
+       They mirror the standalone browser API documented by Prettier. -->
+  <script src="https://unpkg.com/prettier@3.9.6/standalone.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/babel.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/estree.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/typescript.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/html.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/postcss.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/markdown.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/yaml.js"></script>
+
+  <script src="app.js"></script>
+</body>
+</html>
