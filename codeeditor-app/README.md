@@ -106,3 +106,8 @@ cloudflared tunnel --url http://127.0.0.1:8091
   needs internet; it typically keeps working offline after that via
   WebView caching, though that's not a guarantee the way a bundled
   offline copy would be.
+
+
+### GDScript formatting
+
+`.gd` files use the browser build of `pretty-gd-js` (v1.18.1), the formatter family used by the pretty.gd Godot/VS Code integration. If the formatter CDN is unavailable, COODEV falls back to its built-in GDScript formatter.

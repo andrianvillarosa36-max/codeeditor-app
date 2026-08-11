@@ -751,23 +751,92 @@ function formatGDScriptText(source, options = {}) {
   return options.preserveTrailingNewline === false ? result : result + '\n';
 }
 
+// Use the same family of formatter as the popular pretty.gd VS Code/Godot
+// formatter. It is a real GDScript tokenizer/formatter, not just indentation
+// rules. We load the ESM build lazily so the editor still starts if the CDN is
+// temporarily unavailable; the local formatter below remains the safe fallback.
+let prettyGdPromise = null;
+let prettyGdInstance = null;
+
+async function getPrettyGdFormatter() {
+  if (!prettyGdPromise) {
+    prettyGdPromise = import('https://cdn.jsdelivr.net/npm/pretty-gd-js@1.18.1/+esm')
+      .then((mod) => {
+        const candidates = [
+          mod.prettify,
+          mod.format,
+          mod.pretty,
+          mod.default,
+          mod.Prettifier,
+          mod.PrettyGd,
+        ];
+        for (const candidate of candidates) {
+          if (!candidate) continue;
+          if (typeof candidate === 'object' && typeof candidate.prettify === 'function') {
+            prettyGdInstance = candidate;
+            return candidate;
+          }
+          if (typeof candidate === 'function') {
+            // Some builds export prettify(source) directly; others export the
+            // Prettifier class used by the Godot/VS Code integration.
+            try {
+              const direct = candidate('');
+              if (typeof direct === 'string') {
+                prettyGdInstance = { prettify: candidate };
+                return prettyGdInstance;
+              }
+            } catch (_) {}
+            try {
+              const instance = new candidate();
+              if (instance && typeof instance.prettify === 'function') {
+                if ('indent_str' in instance) instance.indent_str = '\\t';
+                if ('tab_size' in instance) instance.tab_size = 4;
+                prettyGdInstance = instance;
+                return instance;
+              }
+            } catch (_) {}
+          }
+        }
+        throw new Error('Unsupported pretty-gd-js export');
+      })
+      .catch((err) => {
+        prettyGdPromise = null;
+        throw err;
+      });
+  }
+  return prettyGdPromise;
+}
+
+async function formatGDScriptWithPrettyGd(source) {
+  try {
+    const formatter = await getPrettyGdFormatter();
+    const result = await formatter.prettify(source);
+    if (typeof result === 'string') return result.endsWith('\\n') ? result : result + '\\n';
+  } catch (err) {
+    console.warn('pretty-gd-js unavailable; using built-in GDScript formatter:', err);
+  }
+  return null;
+}
+
 function registerGDScriptFormatter() {
   monaco.languages.registerDocumentFormattingEditProvider('gdscript', {
-    provideDocumentFormattingEdits(model) {
+    async provideDocumentFormattingEdits(model) {
       const before = model.getValue();
-      const after = formatGDScriptText(before);
+      const pretty = await formatGDScriptWithPrettyGd(before);
+      const after = pretty !== null ? pretty : formatGDScriptText(before);
       if (after === before) return [];
       return [{ range: model.getFullModelRange(), text: after }];
     },
   });
 
   monaco.languages.registerDocumentRangeFormattingEditProvider('gdscript', {
-    provideDocumentRangeFormattingEdits(model, range) {
+    async provideDocumentRangeFormattingEdits(model, range) {
       const before = model.getValue();
       const startOffset = model.getOffsetAt(range.getStartPosition());
       const endOffset = model.getOffsetAt(range.getEndPosition());
       const selected = before.slice(startOffset, endOffset);
-      const after = formatGDScriptText(selected);
+      const pretty = await formatGDScriptWithPrettyGd(selected);
+      const after = pretty !== null ? pretty : formatGDScriptText(selected);
       if (after === selected) return [];
       return [{ range, text: after }];
     },
@@ -868,7 +937,8 @@ async function formatActiveDocument(selectionOnly = false) {
       if (shouldFormatSelection) {
         const range = selection;
         const selected = model.getValueInRange(range);
-        const formatted = formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
+        const pretty = await formatGDScriptWithPrettyGd(selected);
+        const formatted = pretty !== null ? pretty : formatGDScriptText(selected, { preserveTrailingNewline: selected.endsWith('\n') });
         if (formatted !== selected) {
           editor.pushUndoStop();
           editor.executeEdits('gdscript-formatter', [{ range, text: formatted, forceMoveMarkers: true }]);
@@ -876,7 +946,8 @@ async function formatActiveDocument(selectionOnly = false) {
         }
         showToast(formatted !== selected ? 'GDScript selection formatted ✓' : 'Already formatted');
       } else {
-        const formatted = formatGDScriptText(source);
+        const pretty = await formatGDScriptWithPrettyGd(source);
+      const formatted = pretty !== null ? pretty : formatGDScriptText(source);
         const changed = replaceModelText(formatted, 'gdscript-formatter');
         showToast(changed ? 'GDScript formatted ✓' : 'Already formatted');
       }
