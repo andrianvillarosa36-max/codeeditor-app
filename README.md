@@ -54,6 +54,10 @@ storage (`/storage/emulated/0`) every time.
   automatically, with a 📱/🖥️ toggle to check mobile vs desktop
   widths.
 - **Save** (active file) and **Save All** (every dirty tab).
+- **Prettier-style formatting** — `Format` / `Format Document`, `Format Selection`,
+  VS Code-style `Shift+Alt+F`, and optional **Format on Save**. JavaScript/JSX,
+  TypeScript/TSX, JSON, HTML, CSS/SCSS, Markdown, and YAML use Prettier's
+  browser formatter; other languages fall back to Monaco when it has a formatter.
 - **Copy / Cut / Paste** through the real Android clipboard (Command
   Palette, or a physical keyboard's usual shortcuts).
 - **Go to File** (`Ctrl+P`) and **Commands** (`Ctrl+Shift+P`) — search

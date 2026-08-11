@@ -15,6 +15,8 @@
       <button id="new-project-btn">New Project</button>
       <button id="save-btn">Save</button>
       <button id="save-all-btn">Save All</button>
+      <button id="format-btn" title="Format Document (Shift+Alt+F)">Format</button>
+      <button id="format-toggle" title="Toggle automatic formatting when saving">Format on Save: Off</button>
       <button id="font-dec" title="Smaller text">A-</button>
       <button id="font-inc" title="Larger text">A+</button>
       <button id="wrap-toggle" title="Toggle word wrap">Wrap: Off</button>
@@ -169,6 +171,18 @@
     });
   </script>
   <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.49.0/min/vs/loader.js"></script>
+
+  <!-- Prettier browser build + first-party parser plugins.
+       They mirror the standalone browser API documented by Prettier. -->
+  <script src="https://unpkg.com/prettier@3.9.6/standalone.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/babel.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/estree.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/typescript.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/html.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/postcss.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/markdown.js"></script>
+  <script src="https://unpkg.com/prettier@3.9.6/plugins/yaml.js"></script>
+
   <script src="app.js"></script>
 </body>
 </html>

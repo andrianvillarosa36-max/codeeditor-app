@@ -44,6 +44,11 @@ body {
 }
 #topbar-actions button:hover { background: #0891e0; }
 
+#format-btn { background: #4a4a4a !important; }
+#format-btn:hover { background: #5a5a5a !important; }
+#format-toggle { background: #4a4a4a !important; }
+#format-toggle:hover { background: #5a5a5a !important; }
+
 #main { flex: 1; display: flex; min-height: 0; }
 
 #sidebar {

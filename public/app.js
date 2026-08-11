@@ -13,6 +13,8 @@ let wrapOn = false; // nano-style default: lines run off-screen, scroll sideways
 let autoClosing = false; // reentrancy guard for the auto-close-tag feature
 let pasteGuardUntil = 0; // suppress auto-close for a moment after any paste
 let suppressNextClick = false; // set true right before a long-press fires, to swallow the trailing click
+let formatOnSave = false;
+let formatterBusy = false;
 
 let ROOT = '/storage/emulated/0';
 const HOME = '/storage/emulated/0';
@@ -59,6 +61,13 @@ require(['vs/editor/editor.main'], () => {
   // engine (div.class>ul>li*3 etc.) is a much bigger separate library and
   // isn't included here.
   editor.onKeyDown((e) => {
+    // VS Code-style Format Document shortcut: Shift+Alt+F.
+    if (e.keyCode === monaco.KeyCode.KeyF && e.shiftKey && e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      formatActiveDocument(false);
+      return;
+    }
     if (e.keyCode === monaco.KeyCode.Tab && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
       if (tryEmmetExpand()) { e.preventDefault(); e.stopPropagation(); }
     }
@@ -539,9 +548,154 @@ function renderOpenEditors() {
   });
 }
 
+// ---------------- Formatting (Prettier-style, with Monaco fallback) ----------------
+// Prettier is loaded in index.html from its browser/UMD build. We deliberately
+// keep the formatter optional: languages without a Prettier parser fall back
+// to Monaco's built-in format provider when one is available.
+const PRETTIER_PARSERS = {
+  javascript: 'babel',
+  typescript: 'typescript',
+  json: 'json',
+  css: 'css',
+  scss: 'scss',
+  html: 'html',
+  markdown: 'markdown',
+  yaml: 'yaml',
+};
+
+function formatterParserForModel(model) {
+  if (!model) return null;
+  const lang = model.getLanguageId();
+  if (PRETTIER_PARSERS[lang]) return PRETTIER_PARSERS[lang];
+
+  const path = activeTab || '';
+  const ext = path.split('.').pop().toLowerCase();
+  if (ext === 'jsx') return 'babel';
+  if (ext === 'tsx') return 'typescript';
+  if (ext === 'jsonc') return 'json';
+  if (ext === 'htm') return 'html';
+  return null;
+}
+
+function prettierPluginsForParser(parser) {
+  // Prettier's browser build exposes the loaded parser plugins through
+  // window.prettierPlugins. We pass the complete set so embedded syntax
+  // (e.g. JS template literals containing HTML) has the plugins it needs.
+  if (!window.prettierPlugins) return [];
+  return Object.values(window.prettierPlugins);
+}
+
+function offsetAtPosition(model, position) {
+  return model.getOffsetAt(position);
+}
+
+function replaceModelText(formatted, sourceTag = 'prettier') {
+  const model = editor.getModel();
+  if (!model) return false;
+  const old = model.getValue();
+  if (formatted === old) return false;
+  editor.pushUndoStop();
+  editor.executeEdits(sourceTag, [{
+    range: model.getFullModelRange(),
+    text: formatted,
+    forceMoveMarkers: true,
+  }]);
+  editor.pushUndoStop();
+  return true;
+}
+
+async function runMonacoFormatter(selectionOnly = false) {
+  const actionId = selectionOnly
+    ? 'editor.action.formatSelection'
+    : 'editor.action.formatDocument';
+  try {
+    const action = editor.getAction(actionId);
+    if (action) {
+      await action.run();
+      return true;
+    }
+  } catch (e) {
+    // Let the caller show the final friendly message.
+  }
+  return false;
+}
+
+async function formatActiveDocument(selectionOnly = false) {
+  const model = editor.getModel();
+  if (!model || !activeTab || !openTabs[activeTab] || openTabs[activeTab].type !== 'text') {
+    showToast('Open a text file first');
+    return false;
+  }
+
+  if (formatterBusy) return false;
+  formatterBusy = true;
+
+  try {
+    const parser = formatterParserForModel(model);
+    const source = model.getValue();
+    const selection = editor.getSelection();
+
+    // Selection formatting is only attempted with Prettier when there is a
+    // real selection. An empty selection behaves like Format Document.
+    const hasSelection = !!selection && !selection.isEmpty();
+    const shouldFormatSelection = selectionOnly && hasSelection;
+
+    if (parser && window.prettier) {
+      try {
+        const options = {
+          parser,
+          plugins: prettierPluginsForParser(parser),
+          printWidth: 100,
+          tabWidth: 4,
+          useTabs: false,
+          singleQuote: false,
+          trailingComma: 'all',
+        };
+
+        if (shouldFormatSelection) {
+          options.rangeStart = offsetAtPosition(model, selection.getStartPosition());
+          options.rangeEnd = offsetAtPosition(model, selection.getEndPosition());
+        }
+
+        const formatted = await window.prettier.format(source, options);
+        const changed = replaceModelText(formatted, 'prettier');
+        showToast(changed
+          ? (shouldFormatSelection ? 'Selection formatted ✓' : 'Formatted ✓')
+          : 'Already formatted');
+        editor.focus();
+        return true;
+      } catch (e) {
+        // A valid language can still fail if the current text is syntactically
+        // invalid. Fall through to Monaco's provider before reporting failure.
+      }
+    }
+
+    const monacoDone = await runMonacoFormatter(shouldFormatSelection);
+    if (monacoDone) {
+      showToast(shouldFormatSelection ? 'Selection formatted ✓' : 'Formatted ✓');
+      editor.focus();
+      return true;
+    }
+
+    showToast(`No formatter available for ${model.getLanguageId()}`);
+    return false;
+  } finally {
+    formatterBusy = false;
+  }
+}
+
+async function toggleFormatOnSave() {
+  formatOnSave = !formatOnSave;
+  const state = formatOnSave ? 'On' : 'Off';
+  const btn = document.getElementById('format-toggle');
+  if (btn) btn.textContent = `Format on Save: ${state}`;
+  showToast(`Format on Save: ${state}`);
+}
+
 // ---------------- Save ----------------
 async function saveActive() {
   if (!activeTab || openTabs[activeTab].type !== 'text') return;
+  if (formatOnSave) await formatActiveDocument(false);
   const content = openTabs[activeTab].model.getValue();
   try {
     await FS().writeFile({ path: activeTab, data: content, encoding: 'utf8' });
@@ -662,6 +816,8 @@ function toggleSidebarFn() { document.getElementById('sidebar').classList.toggle
 document.getElementById('font-dec').addEventListener('click', fontDec);
 document.getElementById('font-inc').addEventListener('click', fontInc);
 document.getElementById('wrap-toggle').addEventListener('click', toggleWrap);
+document.getElementById('format-btn').addEventListener('click', () => formatActiveDocument(false));
+document.getElementById('format-toggle').addEventListener('click', toggleFormatOnSave);
 document.getElementById('toggle-sidebar').addEventListener('click', toggleSidebarFn);
 
 // ---------------- Extra-keys row (Home/End/Arrows/Tab + sticky Shift/Ctrl) ----------------
@@ -941,6 +1097,9 @@ function commandList() {
   return [
     { label: 'Save', run: saveActive },
     { label: 'Save All', run: saveAll },
+    { label: 'Format Document', run: () => formatActiveDocument(false) },
+    { label: 'Format Selection', run: () => formatActiveDocument(true) },
+    { label: 'Toggle Format on Save', run: toggleFormatOnSave },
     { label: 'New File…', run: newFile },
     { label: 'New Project…', run: newProject },
     { label: 'Toggle Preview', run: togglePreview },
