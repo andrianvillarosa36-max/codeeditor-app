@@ -217,7 +217,7 @@ function langFromExt(name) {
   const ext = name.split('.').pop().toLowerCase();
   const map = {
     js: 'javascript', jsx: 'javascript', mjs: 'javascript', ts: 'typescript', tsx: 'typescript',
-    py: 'python', html: 'html', htm: 'html', css: 'css', scss: 'scss', json: 'json',
+    py: 'python', gd: 'gdscript', html: 'html', htm: 'html', css: 'css', scss: 'scss', json: 'json',
     md: 'markdown', sh: 'shell', bash: 'shell', java: 'java', c: 'c', h: 'c', cpp: 'cpp',
     hpp: 'cpp', go: 'go', rs: 'rust', php: 'php', rb: 'ruby', xml: 'xml',
     yml: 'yaml', yaml: 'yaml', sql: 'sql', txt: 'plaintext', env: 'ini', toml: 'ini',
@@ -860,7 +860,8 @@ async function formatActiveDocument(selectionOnly = false) {
     const parser = formatterParserForModel(model);
     const source = model.getValue();
 
-    if (model.getLanguageId() === 'gdscript') {
+    const isGDScript = model.getLanguageId() === 'gdscript' || /\.gd$/i.test(activeTab || '');
+    if (isGDScript) {
       const selection = editor.getSelection();
       const hasSelection = !!selection && !selection.isEmpty();
       const shouldFormatSelection = selectionOnly && hasSelection;
